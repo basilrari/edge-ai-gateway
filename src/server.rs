@@ -3,12 +3,14 @@ use std::sync::Arc;
 
 use axum::{
     extract::State,
+    http::Method,
     routing::{get, post},
     Json, Router,
 };
 use reqwest::Client;
 use tokio::sync::Mutex;
 use tracing::{info, info_span, warn};
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::orchestrator::Orchestrator;
 use crate::types::{ApiResponse, GatewayCommand};
@@ -20,9 +22,15 @@ pub struct AppState {
 }
 
 pub fn build_router(state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers(Any);
+
     Router::new()
         .route("/infer", post(infer_handler))
         .route("/status", get(status_handler))
+        .layer(cors)
         .with_state(state)
 }
 
