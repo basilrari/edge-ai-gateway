@@ -1,0 +1,24 @@
+# Compiled files
+/target/
+/debug/
+/release/
+
+# Cargo package manager
+Cargo.lock
+**/*.rs.bk
+
+# Rust language server / tooling
+.rls/
+rustfmt.toml
+.rustfmt.toml
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
