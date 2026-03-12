@@ -165,33 +165,50 @@ impl Orchestrator {
 
                                     match parse_tool_call(&content) {
                                         Ok(tool) => {
-                                            let (maybe_model, act, cat, tool_n) =
-                                                self.handle_tool_call(tool, override_active);
-                                            new_model = maybe_model;
-                                            action_taken = act;
-                                            category = cat.clone();
-                                            tool_name = tool_n.clone();
-                                            self.last_command_category = cat.clone();
-                                            self.last_command_name = tool_n.clone();
+                                            if tool.category == "none" {
+                                                action_taken = tool.name.clone();
+                                                category = Some("none".to_string());
+                                                tool_name = Some(tool.name.clone());
+                                                new_state = GatewayState::IDLE;
+                                                self.last_command_category = None;
+                                                self.last_command_name = None;
 
-                                            if new_model.is_some() {
-                                                self.current_model = new_model.clone();
+                                                info!(
+                                                    action = "tool_none",
+                                                    state = ?new_state,
+                                                    name = %tool.name,
+                                                    llm_latency_ms,
+                                                    http_status = %status,
+                                                    reason = "LLM returned category none; no tool activated"
+                                                );
+                                            } else {
+                                                let (maybe_model, act, cat, tool_n) =
+                                                    self.handle_tool_call(tool, override_active);
+                                                new_model = maybe_model;
+                                                action_taken = act;
+                                                category = cat.clone();
+                                                tool_name = tool_n.clone();
+                                                self.last_command_category = cat.clone();
+                                                self.last_command_name = tool_n.clone();
+
+                                                if new_model.is_some() {
+                                                    self.current_model = new_model.clone();
+                                                }
+
+                                                new_state = GatewayState::ACTIVE;
+
+                                                info!(
+                                                    action = "tool_detected",
+                                                    state = ?new_state,
+                                                    category = ?category,
+                                                    tool_name = ?tool_name,
+                                                    model = %self.effective_model_name(),
+                                                    llm_latency_ms,
+                                                    http_status = %status,
+                                                    parse_success = true,
+                                                    reason = "ToolCall parsed from LLM response"
+                                                );
                                             }
-
-                                            new_state = GatewayState::ACTIVE;
-
-                                            info!(
-                                                action = "tool_detected",
-                                                state = ?new_state,
-                                                category = ?category,
-                                                tool_name = ?tool_name,
-                                                model = %self.effective_model_name(),
-                                                llm_latency_ms,
-                                                http_status = %status,
-                                                parse_success = true,
-                                                reason = "ToolCall parsed from LLM response"
-                                            );
-
                                             // Step 7 will make real gRPC call to python-worker for model tools.
                                         }
                                         Err(e) => {
