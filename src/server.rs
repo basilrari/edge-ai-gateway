@@ -110,6 +110,7 @@ async fn status_handler(State(state): State<AppState>) -> Json<serde_json::Value
         "state": format!("{}", orchestrator.current_state),
         "model": orchestrator.effective_model_name(),
         "override_active": orchestrator.override_until.is_some(),
+        "active_command": orchestrator.active_command_display(),
         "latency_ms": latency_ms,
         "llm_latency_ms": llm_latency_ms,
         "memory_estimate_mb": memory_mb,

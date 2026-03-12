@@ -9,6 +9,10 @@ pub struct Orchestrator {
     pub current_state: GatewayState,
     pub current_model: Option<String>,
     pub override_until: Option<Instant>,
+    /// Last command category ("drone" or "model") from a tool call; None when idle/none.
+    pub last_command_category: Option<String>,
+    /// Last command name (e.g. "take_off", "activate_human_detection_yolo"); None when idle/none.
+    pub last_command_name: Option<String>,
 }
 
 impl Orchestrator {
@@ -17,6 +21,16 @@ impl Orchestrator {
             current_state: GatewayState::IDLE,
             current_model: None,
             override_until: None,
+            last_command_category: None,
+            last_command_name: None,
+        }
+    }
+
+    /// Human-readable active command for status: "drone: take_off", "model: vision", or "none".
+    pub fn active_command_display(&self) -> String {
+        match (&self.last_command_category, &self.last_command_name) {
+            (Some(cat), Some(name)) => format!("{}: {}", cat, name),
+            _ => "none".to_string(),
         }
     }
 
@@ -155,8 +169,10 @@ impl Orchestrator {
                                                 self.handle_tool_call(tool, override_active);
                                             new_model = maybe_model;
                                             action_taken = act;
-                                            category = cat;
-                                            tool_name = tool_n;
+                                            category = cat.clone();
+                                            tool_name = tool_n.clone();
+                                            self.last_command_category = cat.clone();
+                                            self.last_command_name = tool_n.clone();
 
                                             if new_model.is_some() {
                                                 self.current_model = new_model.clone();
@@ -260,6 +276,8 @@ impl Orchestrator {
 
                 self.override_until = None;
                 self.current_model = None;
+                self.last_command_category = None;
+                self.last_command_name = None;
                 new_model = None;
                 new_state = GatewayState::IDLE;
                 action_taken = "override_cleared".to_string();
