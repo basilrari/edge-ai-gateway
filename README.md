@@ -5,8 +5,8 @@ HTTP API gateway for SAR (Search and Rescue) drone control. It accepts natural-l
 ## Overview
 
 - **Server**: Axum HTTP server on `http://0.0.0.0:3000` (CORS enabled for all origins).
-- **LLM**: Sends prompts to `http://localhost:8080/v1/chat/completions` (e.g. local LLM server). The LLM returns a single JSON tool call: `{"category": "drone"|"model", "name": "<tool_name>"}`.
-- **States**: `IDLE`, `ACTIVE` (last inference set a tool), `OVERRIDE_ACTIVE` (manual model override for a timeout).
+- **LLM**: Sends prompts to `http://localhost:8080/v1/chat/completions` (e.g. local LLM server). The LLM returns a single JSON tool call: `{"category": "drone"|"model", "name": "<tool_name>"}`. The gateway returns proposals with `pending_approval: true`; the frontend shows Accept/Reject and only **ApplyTool** (after user accepts) applies the tool and sends to Python.
+- **States**: `IDLE`, `ACTIVE` (last applied tool), `OVERRIDE_ACTIVE` (manual model override for a timeout).
 
 ## Build & Run
 
@@ -38,14 +38,16 @@ No request body. Returns JSON with:
 
 Request body: JSON matching one of these shapes:
 
-- **Infer** (run LLM and apply tool):  
+- **Infer** (run LLM; returns proposal with optional `pending_approval: true`):  
   `{"Infer": {"prompt": "user message"}}`
+- **ApplyTool** (after user accepts on frontend; applies tool and sends to Python when category is `"model"`):  
+  `{"ApplyTool": {"category": "model", "tool_name": "activate_human_detection_yolo"}}`
 - **Override** (force model for a period):  
   `{"Override": {"model": "vision", "timeout_sec": 60}}` — `timeout_sec` optional (default 60)
 - **ClearOverride**:  
   `{"ClearOverride": null}`
 
-Response: JSON with **state**, **model**, **override_active**, **category**, **tool_name**, **llm_response**, **action_taken**, **latency_ms**, **llm_latency_ms**. See **AGENTS.md** for exact shapes.
+Response: JSON with **state**, **model**, **override_active**, **category**, **tool_name**, **pending_approval**, **llm_response**, **action_taken**, **latency_ms**, **llm_latency_ms**. See **AGENTS.md** for exact shapes.
 
 ## Tool Names (reference)
 

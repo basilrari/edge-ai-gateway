@@ -74,12 +74,23 @@ When nothing has been run yet or after clear override:
 - Headers: `Content-Type: application/json`
 - Body: **One** of the following JSON objects (externally tagged enum).
 
-**Infer** (run LLM and apply chosen tool):
+**Infer** (run LLM and return proposed tool; does **not** apply or send to Python until frontend sends **ApplyTool**):
 
 ```json
 {
   "Infer": {
     "prompt": "detect people in the flooded area"
+  }
+}
+```
+
+**ApplyTool** (after user accepts on frontend; applies tool and sends to Python when category is `"model"`):
+
+```json
+{
+  "ApplyTool": {
+    "category": "model",
+    "tool_name": "activate_human_detection_yolo"
   }
 }
 ```
@@ -112,12 +123,30 @@ When nothing has been run yet or after clear override:
 | `override_active` | bool   | Whether an override is active. |
 | `category`        | string \| null | Tool category: `"drone"` or `"model"` (only set when Infer ran and a tool was parsed). |
 | `tool_name`       | string \| null | Tool name (e.g. `"move_forward"`, `"activate_human_detection_yolo"`). |
+| `pending_approval` | bool   | When `true`, this is a **proposal** only; frontend shows Accept/Reject. Only **ApplyTool** applies the tool and sends to Python. |
 | `llm_response`    | string | Raw LLM response body (or error message). |
 | `action_taken`    | string | Short description of what was done (e.g. `"Drone command: move_forward"`, `"override_set"`). |
 | `latency_ms`       | number | Total request latency (ms). |
 | `llm_latency_ms`   | number | LLM call latency (ms). |
 
-**Example (Infer success)**
+**Example (Infer proposal — pending approval)**
+
+```json
+{
+  "state": "IDLE",
+  "model": null,
+  "override_active": false,
+  "category": "model",
+  "tool_name": "activate_human_detection_yolo",
+  "pending_approval": true,
+  "llm_response": "...",
+  "action_taken": "Python worker will activate: activate_human_detection_yolo",
+  "latency_ms": 120,
+  "llm_latency_ms": 95
+}
+```
+
+**Example (ApplyTool success — tool applied and sent to Python)**
 
 ```json
 {
@@ -126,10 +155,11 @@ When nothing has been run yet or after clear override:
   "override_active": false,
   "category": "model",
   "tool_name": "activate_human_detection_yolo",
-  "llm_response": "...",
+  "pending_approval": false,
+  "llm_response": "",
   "action_taken": "Python worker will activate: activate_human_detection_yolo",
-  "latency_ms": 120,
-  "llm_latency_ms": 95
+  "latency_ms": 12,
+  "llm_latency_ms": 0
 }
 ```
 
@@ -142,6 +172,7 @@ When nothing has been run yet or after clear override:
   "override_active": false,
   "category": null,
   "tool_name": null,
+  "pending_approval": false,
   "llm_response": "invalid payload: ...",
   "action_taken": "parse_failed",
   "latency_ms": 0,
@@ -156,12 +187,14 @@ When nothing has been run yet or after clear override:
 1. **IDLE**: No model set, no active command; `active_command` is `"none"`.
 2. **Infer (prompt)**:
    - Gateway sends the prompt (with system prompt) to the LLM at `http://localhost:8080/v1/chat/completions`.
-   - LLM is expected to return exactly one JSON tool: `{"category": "drone"|"model", "name": "<tool_name>"}`.
-   - Gateway updates state to **ACTIVE**, stores the last **category** and **name** (so **GET /status** can return `active_command` as `"drone: ..."` or `"model: ..."`).
-   - Model tools set internal model to `"vision"`; drone tools do not change model.
-3. **Override**: Sets state to **OVERRIDE_ACTIVE** and forces the given **model** for **timeout_sec**; does not change `active_command` (that stays the last inferred tool until cleared).
-4. **ClearOverride**: Resets to **IDLE**, clears model and **active_command** (so next **GET /status** returns `active_command: "none"`).
-5. **GET /status** never changes state; it returns current state, model, override flag, and **active_command** (last drone or model command, or `"none"`).
+   - LLM is expected to return exactly one JSON tool: `{"category": "drone"|"model", "name": "<tool_name>"}` or category `"none"`.
+   - If the tool is drone or model, the gateway returns the response with **`pending_approval: true`** and does **not** update state or send to Python. The frontend shows Accept/Reject; only when the user accepts does the frontend send **ApplyTool**.
+   - If the tool is `"none"`, the gateway returns with `pending_approval: false` and may set state to IDLE.
+3. **ApplyTool (category, tool_name)**:
+   - Called by the frontend after the user accepts a proposal. Gateway updates state to **ACTIVE**, stores **category** and **tool_name** (so **GET /status** returns `active_command`). For category `"model"`, the gateway sends to the Python server (placeholder until gRPC/HTTP is wired). Model tools set internal model to `"vision"`; drone tools do not change model.
+4. **Override**: Sets state to **OVERRIDE_ACTIVE** and forces the given **model** for **timeout_sec**; does not change `active_command` (that stays the last applied tool until cleared).
+5. **ClearOverride**: Resets to **IDLE**, clears model and **active_command** (so next **GET /status** returns `active_command: "none"`).
+6. **GET /status** never changes state; it returns current state, model, override flag, and **active_command** (last drone or model command, or `"none"`).
 
 ---
 
