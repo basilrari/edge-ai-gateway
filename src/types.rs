@@ -30,6 +30,11 @@ pub struct ToolCall {
 #[derive(Debug, serde::Deserialize)]
 pub enum GatewayCommand {
     Infer { prompt: String },
+    /// Apply a previously proposed tool (after user accepts on frontend). Updates state and sends to Python.
+    ApplyTool {
+        category: String,
+        tool_name: String,
+    },
     Override { model: String, timeout_sec: Option<u64> },
     ClearOverride,
     Status,
@@ -42,6 +47,8 @@ pub struct ApiResponse {
     pub override_active: bool,
     pub category: Option<String>,
     pub tool_name: Option<String>,
+    /// When true, this response is a proposal: frontend should show Accept/Reject; only ApplyTool sends to Python.
+    pub pending_approval: bool,
     pub llm_response: String,
     pub action_taken: String,
     pub latency_ms: u64,

@@ -86,7 +86,17 @@ impl Orchestrator {
         &mut self,
         cmd: GatewayCommand,
         client: &Client,
-    ) -> (u64, f64, u64, Option<String>, String, String, Option<String>, Option<String>) {
+    ) -> (
+        u64,
+        f64,
+        u64,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        bool,
+    ) {
         let start = Instant::now();
         let mut llm_latency_ms: u64 = 0;
         let mut new_state = self.current_state;
@@ -95,6 +105,7 @@ impl Orchestrator {
         let mut llm_response = String::new();
         let mut category: Option<String> = None;
         let mut tool_name: Option<String> = None;
+        let mut pending_approval = false;
 
         match cmd {
             GatewayCommand::Infer { prompt } => {
@@ -182,34 +193,26 @@ impl Orchestrator {
                                                     reason = "LLM returned category none; no tool activated"
                                                 );
                                             } else {
+                                                // Proposal only: do not update orchestrator state; frontend will show Accept/Reject.
                                                 let (maybe_model, act, cat, tool_n) =
                                                     self.handle_tool_call(tool, override_active);
                                                 new_model = maybe_model;
                                                 action_taken = act;
                                                 category = cat.clone();
                                                 tool_name = tool_n.clone();
-                                                self.last_command_category = cat.clone();
-                                                self.last_command_name = tool_n.clone();
-
-                                                if new_model.is_some() {
-                                                    self.current_model = new_model.clone();
-                                                }
-
-                                                new_state = GatewayState::ACTIVE;
+                                                pending_approval = true;
+                                                // Do NOT set self.last_command_* or self.current_model here;
+                                                // only ApplyTool (after user accepts) will do that and send to Python.
 
                                                 info!(
-                                                    action = "tool_detected",
-                                                    state = ?new_state,
+                                                    action = "tool_proposal",
                                                     category = ?category,
                                                     tool_name = ?tool_name,
-                                                    model = %self.effective_model_name(),
                                                     llm_latency_ms,
                                                     http_status = %status,
-                                                    parse_success = true,
-                                                    reason = "ToolCall parsed from LLM response"
+                                                    reason = "ToolCall proposal returned to frontend for approval"
                                                 );
                                             }
-                                            // Step 7 will make real gRPC call to python-worker for model tools.
                                         }
                                         Err(e) => {
                                             warn!(
@@ -258,6 +261,50 @@ impl Orchestrator {
                         }
                     }
                 }
+            }
+            GatewayCommand::ApplyTool {
+                category: ref cat,
+                tool_name: ref name,
+            } => {
+                let tool = ToolCall {
+                    category: cat.clone(),
+                    name: name.clone(),
+                };
+                let override_active = matches!(self.current_state, GatewayState::OVERRIDE_ACTIVE)
+                    && self
+                        .override_until
+                        .map(|t| t > Instant::now())
+                        .unwrap_or(false);
+                let (maybe_model, act, _c, _n) = self.handle_tool_call(tool, override_active);
+                new_model = maybe_model;
+                action_taken = act;
+                category = Some(cat.clone());
+                tool_name = Some(name.clone());
+                self.last_command_category = Some(cat.clone());
+                self.last_command_name = Some(name.clone());
+                if new_model.is_some() {
+                    self.current_model = new_model.clone();
+                }
+                new_state = GatewayState::ACTIVE;
+
+                // Send to Python server when category is "model" (placeholder: POST to env URL or log).
+                if cat == "model" {
+                    info!(
+                        action = "apply_tool_send_to_python",
+                        tool_name = %name,
+                        reason = "user accepted; sending to Python server"
+                    );
+                    // TODO: real gRPC or HTTP call to python-worker when available.
+                    // e.g. let _ = client.post(python_url).json(&json!({"tool": name, ...})).send().await;
+                }
+
+                info!(
+                    action = "apply_tool",
+                    state = ?new_state,
+                    category = %cat,
+                    tool_name = %name,
+                    reason = "tool applied after user acceptance"
+                );
             }
             GatewayCommand::Override { model, timeout_sec } => {
                 info!(
@@ -343,6 +390,7 @@ impl Orchestrator {
             llm_response,
             category,
             tool_name,
+            pending_approval,
         )
     }
 }

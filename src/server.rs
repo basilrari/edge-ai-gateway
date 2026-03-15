@@ -52,6 +52,7 @@ async fn infer_handler(
                 override_active: false,
                 category: None,
                 tool_name: None,
+                pending_approval: false,
                 llm_response: format!("invalid payload: {e}"),
                 action_taken: "parse_failed".to_string(),
                 latency_ms: 0,
@@ -80,6 +81,7 @@ async fn infer_handler(
         llm_response,
         category,
         tool_name,
+        pending_approval,
     ) = orchestrator.process_command(cmd, &state.client).await;
 
     let api = ApiResponse {
@@ -88,6 +90,7 @@ async fn infer_handler(
         override_active: orchestrator.override_until.is_some(),
         category,
         tool_name,
+        pending_approval,
         llm_response,
         action_taken,
         latency_ms,
@@ -103,7 +106,7 @@ async fn status_handler(State(state): State<AppState>) -> Json<serde_json::Value
 
     let mut orchestrator = state.orchestrator.lock().await;
 
-    let (latency_ms, memory_mb, llm_latency_ms, _new_model, _action_taken, _llm, _cat, _tool) =
+    let (latency_ms, memory_mb, llm_latency_ms, _new_model, _action_taken, _llm, _cat, _tool, _pending) =
         orchestrator.process_command(GatewayCommand::Status, &state.client).await;
 
     Json(serde_json::json!({
