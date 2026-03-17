@@ -2,6 +2,10 @@
 
 HTTP API gateway for SAR (Search and Rescue) drone control. It accepts natural-language or structured commands, calls an LLM to decide a **drone** or **model** tool, and exposes status (including the currently active command).
 
+## How this ties into the project
+
+The Gateway is the **central router** in the [SAR drone architecture](../README.md). The **frontend** sends user prompts (and ApplyTool after user accepts) to this server. The Gateway calls the **LLM** to get a structured tool (drone or model); when the user accepts, it applies the tool. **Model** tools are forwarded to the **Model Server** (e.g. python-worker / ROS2) for flood segmentation, flood classification, human detection. **Drone** tools will be forwarded to the **Drone Server** ([drone-server/](../drone-server/)) once that integration is in place (e.g. HTTP or local process call). The Gateway does not talk MAVLink itself; it delegates drone actions to the Drone Server.
+
 ## Overview
 
 - **Server**: Axum HTTP server on `http://0.0.0.0:3000` (CORS enabled for all origins).

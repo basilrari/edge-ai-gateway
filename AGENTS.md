@@ -4,6 +4,13 @@ This file defines the **exact API contract** (inputs and outputs) and **how the 
 
 ---
 
+## Project context
+
+- **Code** is the SAR (Search and Rescue) drone repo. See [Code/README.md](../README.md) for the full architecture.
+- The **Gateway** sits between the **frontend** and the **LLM** / **Drone Server** / **Model Server**. It receives HTTP requests (prompts, ApplyTool, Override, ClearOverride), calls the LLM for inference, and routes accepted tools: **model** → Model Server (e.g. python-worker); **drone** → Drone Server ([drone-server/](../drone-server/)) when wired. The Gateway does not implement MAVLink or drone logic; it only routes commands and keeps state (IDLE, ACTIVE, OVERRIDE_ACTIVE).
+
+---
+
 ## Base URL
 
 - Server: `http://0.0.0.0:3000` (or `http://localhost:3000` from the same host).
