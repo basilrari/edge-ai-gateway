@@ -53,4 +53,33 @@ pub struct ApiResponse {
     pub action_taken: String,
     pub latency_ms: u64,
     pub llm_latency_ms: u64,
+    /// Correlates gateway logs with `drone-http` (`x-request-id`) and browser devtools.
+    #[serde(default)]
+    pub request_id: String,
+    /// Ordered pipeline stages for debugging (no secrets).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub debug_trace: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drone_http_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drone_http_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drone_error: Option<String>,
+}
+
+/// Result of [`crate::orchestrator::Orchestrator::process_command`].
+#[derive(Debug)]
+pub struct CommandOutcome {
+    pub latency_ms: u64,
+    pub memory_estimate_mb: f64,
+    pub llm_latency_ms: u64,
+    pub action_taken: String,
+    pub llm_response: String,
+    pub category: Option<String>,
+    pub tool_name: Option<String>,
+    pub pending_approval: bool,
+    pub drone_http_status: Option<u16>,
+    pub drone_http_ms: Option<u64>,
+    pub drone_error: Option<String>,
+    pub trace: Vec<String>,
 }

@@ -172,6 +172,24 @@ pub struct ChatMessage {
     pub content: String,
 }
 
+/// Strip optional Markdown fences so models that wrap JSON in ` ```json ` blocks still parse.
+pub fn extract_json_tool_payload(raw_text: &str) -> String {
+    let s = raw_text.trim();
+    if let Some(pos) = s.find("```") {
+        let after_fence = &s[pos + 3..];
+        let after_fence = after_fence
+            .strip_prefix("json")
+            .or_else(|| after_fence.strip_prefix("JSON"))
+            .unwrap_or(after_fence)
+            .trim_start();
+        if let Some(end) = after_fence.find("```") {
+            return after_fence[..end].trim().to_string();
+        }
+    }
+    s.to_string()
+}
+
 pub fn parse_tool_call(raw_text: &str) -> Result<ToolCall, serde_json::Error> {
-    serde_json::from_str(raw_text)
+    let cleaned = extract_json_tool_payload(raw_text);
+    serde_json::from_str(&cleaned)
 }

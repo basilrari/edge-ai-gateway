@@ -1,6 +1,7 @@
 //! Jetson LLM Gateway — SAR + Drone controller with HTTP API.
 //! Main entrypoint: startup telemetry and persistent Axum server.
 
+mod config;
 mod types;
 mod llm;
 mod orchestrator;
@@ -95,7 +96,24 @@ async fn main() {
         rust_version = %rust_ver,
     );
 
-    let client = Client::new();
+    let llm_url = crate::config::llm_chat_completions_url();
+    let drone_url = crate::config::drone_apply_tool_url();
+    let drone_health = crate::config::drone_health_url();
+    info!(
+        action = "startup_config",
+        llm_chat_completions_url = %llm_url,
+        drone_apply_tool_url = %drone_url,
+        drone_health_url = %drone_health,
+        reason = "set LLM_BASE_URL / DRONE_SERVER_URL env vars to override defaults"
+    );
+    eprintln!("LLM (OpenAI-compatible): {}", llm_url);
+    eprintln!("Drone HTTP apply-tool:  {}", drone_url);
+    eprintln!("Drone HTTP health:      {}", drone_health);
+
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(125))
+        .build()
+        .expect("reqwest client");
     let orchestrator = Orchestrator::new();
     let state = AppState {
         orchestrator: std::sync::Arc::new(Mutex::new(orchestrator)),

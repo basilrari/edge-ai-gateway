@@ -1,5 +1,6 @@
+use crate::config;
 use crate::llm::{parse_tool_call, ChatMessage, ChatRequest, ChatResponse, SAR_SYSTEM_PROMPT};
-use crate::types::{GatewayCommand, GatewayState, ToolCall};
+use crate::types::{CommandOutcome, GatewayCommand, GatewayState, ToolCall};
 use reqwest::Client;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
@@ -82,35 +83,33 @@ impl Orchestrator {
         (new_model, action_taken, category, tool_name)
     }
 
+    #[allow(unused_assignments)]
     pub async fn process_command(
         &mut self,
         cmd: GatewayCommand,
         client: &Client,
-    ) -> (
-        u64,
-        f64,
-        u64,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        bool,
-    ) {
+        request_id: &str,
+    ) -> CommandOutcome {
         let start = Instant::now();
+        let mut trace = vec![format!("gateway_request_id={request_id}")];
         let mut llm_latency_ms: u64 = 0;
         let mut new_state = self.current_state;
-        let mut new_model: Option<String> = self.current_model.clone();
-        let action_taken: String;
+        // Overwritten on every path below before use in CommandOutcome.
+        let mut action_taken = String::new();
         let mut llm_response = String::new();
         let mut category: Option<String> = None;
         let mut tool_name: Option<String> = None;
         let mut pending_approval = false;
+        let mut drone_http_status: Option<u16> = None;
+        let mut drone_http_ms: Option<u64> = None;
+        let mut drone_error: Option<String> = None;
 
         match cmd {
             GatewayCommand::Infer { prompt } => {
+                trace.push(format!("command=Infer prompt_len={}", prompt.len()));
                 info!(
                     action = "infer_request",
+                    request_id = %request_id,
                     state = ?self.current_state,
                     model = %self.effective_model_name(),
                     prompt_len = prompt.len(),
@@ -124,8 +123,10 @@ impl Orchestrator {
                         .unwrap_or(false);
 
                 if override_active {
+                    trace.push("stage=infer_skipped_override_active".into());
                     info!(
                         action = "infer_skip_llm_due_to_override",
+                        request_id = %request_id,
                         state = ?self.current_state,
                         model = %self.effective_model_name(),
                         reason = "override active; ignoring LLM decision"
@@ -133,6 +134,9 @@ impl Orchestrator {
                     new_state = GatewayState::OVERRIDE_ACTIVE;
                     action_taken = "override_active_skip_llm".to_string();
                 } else {
+                    let llm_url = config::llm_chat_completions_url();
+                    trace.push(format!("stage=llm_http_post url={llm_url}"));
+
                     let request = ChatRequest {
                         model: "qwen".to_string(),
                         messages: vec![
@@ -151,16 +155,23 @@ impl Orchestrator {
                     let llm_start = Instant::now();
 
                     let http_result = client
-                        .post("http://localhost:8080/v1/chat/completions")
+                        .post(&llm_url)
+                        .header("x-request-id", request_id)
                         .json(&request)
+                        .timeout(Duration::from_secs(120))
                         .send()
                         .await;
 
                     llm_latency_ms = llm_start.elapsed().as_millis() as u64;
+                    trace.push(format!("stage=llm_http_done ms={llm_latency_ms}"));
 
                     match http_result {
                         Ok(resp) => {
                             let status = resp.status();
+                            trace.push(format!(
+                                "stage=llm_http_response http_status={}",
+                                status.as_u16()
+                            ));
                             let text = resp.text().await.unwrap_or_default();
                             llm_response = text.clone();
 
@@ -174,6 +185,11 @@ impl Orchestrator {
                                         .map(|c| c.message.content.clone())
                                         .unwrap_or_default();
 
+                                    trace.push(format!(
+                                        "stage=llm_content_len chars={}",
+                                        content.len()
+                                    ));
+
                                     match parse_tool_call(&content) {
                                         Ok(tool) => {
                                             if tool.category == "none" {
@@ -183,9 +199,11 @@ impl Orchestrator {
                                                 new_state = GatewayState::IDLE;
                                                 self.last_command_category = None;
                                                 self.last_command_name = None;
+                                                trace.push("stage=tool_none".into());
 
                                                 info!(
                                                     action = "tool_none",
+                                                    request_id = %request_id,
                                                     state = ?new_state,
                                                     name = %tool.name,
                                                     llm_latency_ms,
@@ -193,19 +211,21 @@ impl Orchestrator {
                                                     reason = "LLM returned category none; no tool activated"
                                                 );
                                             } else {
-                                                // Proposal only: do not update orchestrator state; frontend will show Accept/Reject.
-                                                let (maybe_model, act, cat, tool_n) =
+                                                // Proposal only: do not update self.current_model or last_command_*.
+                                                let (_, act, cat, tool_n) =
                                                     self.handle_tool_call(tool, override_active);
-                                                new_model = maybe_model;
                                                 action_taken = act;
                                                 category = cat.clone();
                                                 tool_name = tool_n.clone();
                                                 pending_approval = true;
-                                                // Do NOT set self.last_command_* or self.current_model here;
-                                                // only ApplyTool (after user accepts) will do that and send to Python.
+                                                trace.push(format!(
+                                                    "stage=tool_proposal category={:?} tool={:?}",
+                                                    category, tool_name
+                                                ));
 
                                                 info!(
                                                     action = "tool_proposal",
+                                                    request_id = %request_id,
                                                     category = ?category,
                                                     tool_name = ?tool_name,
                                                     llm_latency_ms,
@@ -215,8 +235,10 @@ impl Orchestrator {
                                             }
                                         }
                                         Err(e) => {
+                                            trace.push(format!("stage=tool_json_parse_failed err={e}"));
                                             warn!(
                                                 action = "tool_parse_failed",
+                                                request_id = %request_id,
                                                 state = ?self.current_state,
                                                 llm_latency_ms,
                                                 http_status = %status,
@@ -224,7 +246,6 @@ impl Orchestrator {
                                                 reason = "failed to parse ToolCall JSON; falling back to vision model"
                                             );
                                             self.current_model = Some("vision".to_string());
-                                            new_model = self.current_model.clone();
                                             new_state = GatewayState::ACTIVE;
                                             action_taken =
                                                 "tool_parse_failed_fallback_vision".to_string();
@@ -232,30 +253,32 @@ impl Orchestrator {
                                     }
                                 }
                                 Err(e) => {
+                                    trace.push(format!("stage=llm_envelope_parse_failed err={e}"));
                                     warn!(
                                         action = "llm_parse_failed",
+                                        request_id = %request_id,
                                         state = ?self.current_state,
                                         llm_latency_ms,
                                         error = %e,
                                         reason = "failed to parse LLM envelope; falling back to text model"
                                     );
                                     self.current_model = Some("text".to_string());
-                                    new_model = self.current_model.clone();
                                     new_state = GatewayState::ACTIVE;
                                     action_taken = "llm_parse_failed_fallback_text".to_string();
                                 }
                             }
                         }
                         Err(e) => {
+                            trace.push(format!("stage=llm_http_transport_failed err={e}"));
                             warn!(
                                 action = "llm_http_failed",
+                                request_id = %request_id,
                                 state = ?self.current_state,
                                 llm_latency_ms,
                                 error = %e,
                                 reason = "HTTP request to LLM failed; falling back to text model"
                             );
                             self.current_model = Some("text".to_string());
-                            new_model = self.current_model.clone();
                             new_state = GatewayState::ACTIVE;
                             action_taken = "llm_http_failed_fallback_text".to_string();
                         }
@@ -266,6 +289,7 @@ impl Orchestrator {
                 category: ref cat,
                 tool_name: ref name,
             } => {
+                trace.push(format!("command=ApplyTool category={cat} tool={name}"));
                 let tool = ToolCall {
                     category: cat.clone(),
                     name: name.clone(),
@@ -276,30 +300,103 @@ impl Orchestrator {
                         .map(|t| t > Instant::now())
                         .unwrap_or(false);
                 let (maybe_model, act, _c, _n) = self.handle_tool_call(tool, override_active);
-                new_model = maybe_model;
+                if let Some(m) = maybe_model {
+                    self.current_model = Some(m);
+                }
                 action_taken = act;
                 category = Some(cat.clone());
                 tool_name = Some(name.clone());
                 self.last_command_category = Some(cat.clone());
                 self.last_command_name = Some(name.clone());
-                if new_model.is_some() {
-                    self.current_model = new_model.clone();
-                }
                 new_state = GatewayState::ACTIVE;
 
-                // Send to Python server when category is "model" (placeholder: POST to env URL or log).
                 if cat == "model" {
+                    trace.push("stage=model_apply_placeholder".into());
                     info!(
                         action = "apply_tool_send_to_python",
+                        request_id = %request_id,
                         tool_name = %name,
-                        reason = "user accepted; sending to Python server"
+                        reason = "user accepted; model path (python-worker) not wired yet"
                     );
-                    // TODO: real gRPC or HTTP call to python-worker when available.
-                    // e.g. let _ = client.post(python_url).json(&json!({"tool": name, ...})).send().await;
+                }
+
+                if cat == "drone" {
+                    let url = config::drone_apply_tool_url();
+                    trace.push(format!("stage=drone_http_begin url={url}"));
+                    let t0 = Instant::now();
+                    let body = serde_json::json!({ "tool": name });
+                    let send_result = client
+                        .post(&url)
+                        .header("x-request-id", request_id)
+                        .json(&body)
+                        .timeout(Duration::from_secs(30))
+                        .send()
+                        .await;
+                    let elapsed_ms = t0.elapsed().as_millis() as u64;
+                    drone_http_ms = Some(elapsed_ms);
+
+                    match send_result {
+                        Ok(resp) => {
+                            drone_http_status = Some(resp.status().as_u16());
+                            let status_u = resp.status();
+                            let body_text = resp.text().await.unwrap_or_default();
+                            trace.push(format!(
+                                "stage=drone_http_response status={} body_len={}",
+                                status_u.as_u16(),
+                                body_text.len()
+                            ));
+
+                            let parsed: Result<serde_json::Value, _> =
+                                serde_json::from_str(&body_text);
+                            match parsed {
+                                Ok(v) => {
+                                    let ok = v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
+                                    if ok {
+                                        trace.push("stage=drone_mavlink_ok".into());
+                                        action_taken =
+                                            format!("drone_http_ok:{} ms={}", name, elapsed_ms);
+                                    } else {
+                                        let err = v
+                                            .get("error")
+                                            .and_then(|x| x.as_str())
+                                            .unwrap_or("ok=false without error field")
+                                            .to_string();
+                                        drone_error = Some(format!(
+                                            "drone_server_http={} error={}",
+                                            status_u.as_u16(),
+                                            err
+                                        ));
+                                        trace.push(format!("stage=drone_mavlink_rejected {err}"));
+                                        action_taken = format!(
+                                            "drone_http_rejected:{} http={}",
+                                            name,
+                                            status_u.as_u16()
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    drone_error = Some(format!(
+                                        "drone_server_bad_json http={} err={e} body_prefix={}",
+                                        status_u.as_u16(),
+                                        body_text.chars().take(200).collect::<String>()
+                                    ));
+                                    trace.push("stage=drone_response_not_json".into());
+                                    action_taken =
+                                        format!("drone_http_bad_json:{} ", name);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            drone_error = Some(format!("drone_http_transport: {e}"));
+                            trace.push(format!("stage=drone_http_transport_err {e}"));
+                            action_taken = format!("drone_http_transport_failed:{name}");
+                        }
+                    }
                 }
 
                 info!(
                     action = "apply_tool",
+                    request_id = %request_id,
                     state = ?new_state,
                     category = %cat,
                     tool_name = %name,
@@ -307,8 +404,10 @@ impl Orchestrator {
                 );
             }
             GatewayCommand::Override { model, timeout_sec } => {
+                trace.push("command=Override".into());
                 info!(
                     action = "override_request",
+                    request_id = %request_id,
                     state = ?self.current_state,
                     model = %model,
                     reason = "received override command"
@@ -318,12 +417,12 @@ impl Orchestrator {
                 let until = Instant::now() + Duration::from_secs(timeout);
                 self.override_until = Some(until);
                 self.current_model = Some(model.clone());
-                new_model = self.current_model.clone();
                 new_state = GatewayState::OVERRIDE_ACTIVE;
                 action_taken = "override_set".to_string();
 
                 info!(
                     action = "set_override",
+                    request_id = %request_id,
                     state = ?new_state,
                     model = %model,
                     override_timeout_sec = timeout,
@@ -331,8 +430,10 @@ impl Orchestrator {
                 );
             }
             GatewayCommand::ClearOverride => {
+                trace.push("command=ClearOverride".into());
                 info!(
                     action = "clear_override_request",
+                    request_id = %request_id,
                     state = ?self.current_state,
                     model = %self.effective_model_name(),
                     reason = "received clear-override command"
@@ -342,20 +443,22 @@ impl Orchestrator {
                 self.current_model = None;
                 self.last_command_category = None;
                 self.last_command_name = None;
-                new_model = None;
                 new_state = GatewayState::IDLE;
                 action_taken = "override_cleared".to_string();
 
                 info!(
                     action = "clear_override",
+                    request_id = %request_id,
                     state = ?new_state,
                     model = %self.effective_model_name(),
                     reason = "clear override and return to idle"
                 );
             }
             GatewayCommand::Status => {
+                trace.push("command=Status".into());
                 info!(
                     action = "status_only",
+                    request_id = %request_id,
                     state = ?self.current_state,
                     model = %self.effective_model_name(),
                     reason = "status command; no state change"
@@ -370,8 +473,14 @@ impl Orchestrator {
 
         self.current_state = new_state;
 
+        trace.push(format!(
+            "stage=done state={:?} latency_ms={latency_ms}",
+            self.current_state
+        ));
+
         info!(
             action = "state_transition",
+            request_id = %request_id,
             previous_state = ?previous_state,
             state = ?self.current_state,
             model = %self.effective_model_name(),
@@ -381,16 +490,19 @@ impl Orchestrator {
             reason = "command processed"
         );
 
-        (
+        CommandOutcome {
             latency_ms,
-            fake_memory_mb,
+            memory_estimate_mb: fake_memory_mb,
             llm_latency_ms,
-            new_model,
             action_taken,
             llm_response,
             category,
             tool_name,
             pending_approval,
-        )
+            drone_http_status,
+            drone_http_ms,
+            drone_error,
+            trace,
+        }
     }
 }
