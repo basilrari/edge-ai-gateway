@@ -81,6 +81,7 @@ async fn infer_handler(
                 drone_http_status: None,
                 drone_http_ms: None,
                 drone_error: None,
+                tool_params: None,
             });
         }
     };
@@ -114,6 +115,7 @@ async fn infer_handler(
         drone_http_status: outcome.drone_http_status,
         drone_http_ms: outcome.drone_http_ms,
         drone_error: outcome.drone_error,
+        tool_params: outcome.tool_params,
     };
 
     Json(api)

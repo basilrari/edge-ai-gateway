@@ -103,6 +103,7 @@ impl Orchestrator {
         let mut drone_http_status: Option<u16> = None;
         let mut drone_http_ms: Option<u64> = None;
         let mut drone_error: Option<String> = None;
+        let mut tool_params: Option<serde_json::Value> = None;
 
         match cmd {
             GatewayCommand::Infer { prompt } => {
@@ -133,6 +134,7 @@ impl Orchestrator {
                     );
                     new_state = GatewayState::OVERRIDE_ACTIVE;
                     action_taken = "override_active_skip_llm".to_string();
+                    tool_params = None;
                 } else {
                     let llm_url = config::llm_chat_completions_url();
                     trace.push(format!("stage=llm_http_post url={llm_url}"));
@@ -193,6 +195,7 @@ impl Orchestrator {
                                     match parse_tool_call(&content) {
                                         Ok(tool) => {
                                             if tool.category == "none" {
+                                                tool_params = None;
                                                 action_taken = tool.name.clone();
                                                 category = Some("none".to_string());
                                                 tool_name = Some(tool.name.clone());
@@ -211,6 +214,7 @@ impl Orchestrator {
                                                     reason = "LLM returned category none; no tool activated"
                                                 );
                                             } else {
+                                                tool_params = tool.params.clone();
                                                 // Proposal only: do not update self.current_model or last_command_*.
                                                 let (_, act, cat, tool_n) =
                                                     self.handle_tool_call(tool, override_active);
@@ -288,11 +292,17 @@ impl Orchestrator {
             GatewayCommand::ApplyTool {
                 category: ref cat,
                 tool_name: ref name,
+                params: ref apply_params,
             } => {
-                trace.push(format!("command=ApplyTool category={cat} tool={name}"));
+                tool_params = apply_params.clone();
+                trace.push(format!(
+                    "command=ApplyTool category={cat} tool={name} has_params={}",
+                    apply_params.is_some()
+                ));
                 let tool = ToolCall {
                     category: cat.clone(),
                     name: name.clone(),
+                    params: apply_params.clone(),
                 };
                 let override_active = matches!(self.current_state, GatewayState::OVERRIDE_ACTIVE)
                     && self
@@ -324,7 +334,12 @@ impl Orchestrator {
                     let url = config::drone_apply_tool_url();
                     trace.push(format!("stage=drone_http_begin url={url}"));
                     let t0 = Instant::now();
-                    let body = serde_json::json!({ "tool": name });
+                    let params_json = match apply_params.as_ref() {
+                        None | Some(serde_json::Value::Null) => serde_json::json!({}),
+                        Some(v) if v.is_object() => v.clone(),
+                        Some(_) => serde_json::json!({}),
+                    };
+                    let body = serde_json::json!({ "tool": name, "params": params_json });
                     let send_result = client
                         .post(&url)
                         .header("x-request-id", request_id)
@@ -503,6 +518,7 @@ impl Orchestrator {
             drone_http_ms,
             drone_error,
             trace,
+            tool_params,
         }
     }
 }

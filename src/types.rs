@@ -21,10 +21,12 @@ impl fmt::Display for GatewayState {
     }
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct ToolCall {
     pub category: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -34,6 +36,9 @@ pub enum GatewayCommand {
     ApplyTool {
         category: String,
         tool_name: String,
+        /// Forwarded to `drone-http` for MAVLink tools that need extra fields (`seq`, `lat_deg`, …).
+        #[serde(default)]
+        params: Option<serde_json::Value>,
     },
     Override { model: String, timeout_sec: Option<u64> },
     ClearOverride,
@@ -65,6 +70,9 @@ pub struct ApiResponse {
     pub drone_http_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drone_error: Option<String>,
+    /// When `pending_approval` is true, optional structured args for the next `ApplyTool` (from LLM).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_params: Option<serde_json::Value>,
 }
 
 /// Result of [`crate::orchestrator::Orchestrator::process_command`].
@@ -82,4 +90,5 @@ pub struct CommandOutcome {
     pub drone_http_ms: Option<u64>,
     pub drone_error: Option<String>,
     pub trace: Vec<String>,
+    pub tool_params: Option<serde_json::Value>,
 }
