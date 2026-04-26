@@ -24,8 +24,8 @@ The **`params`** field is optional. Omit it entirely, or use `{}`, unless the to
   - `set_mode_guided` — switch to GUIDED (same intent as TUI `g`; `hover` is an alias that also selects GUIDED).
   - `hover` — hold position / GUIDED (alias of `set_mode_guided`).
   - `takeoff` — one-step launch: the vehicle is set to **GUIDED**, **armed**, then **NAV_TAKEOFF** (optional `params`: `{"altitude_m": 10}`). Use this when the user says things like “take off now”, “launch”, or “get airborne” — you do **not** need separate `set_mode_guided` / `arm` unless they asked only to arm or only to change mode.
-  - `start_mission` — AUTO then MISSION_START (same sequence as TUI `m`; mission must already be on the FC).
-  - `mission_set_current` — jump mission item; **requires** `params`: `{"seq": <number>}` (0-based sequence).
+  - `start_mission` — **Fly the mission / follow uploaded waypoints**: switches to **AUTO** and sends **MISSION_START** (same as TUI `m`). The mission file must **already be stored on the flight controller** (e.g. uploaded in Mission Planner / QGroundControl). This is the tool for “run the mission”, “follow the waypoints”, “execute the plan”, “fly AUTO mission” — **not** `mission_set_current` alone.
+  - `mission_set_current` — **Only** sets which mission item is “current” (`MAV_CMD_DO_SET_MISSION_CURRENT`); **requires** `params`: `{"seq": <number>}` (0-based index). It does **not** load a mission onto the FC and does **not** by itself start AUTO navigation. Use when the user names a **specific waypoint index** (e.g. “skip to waypoint 3” → `seq` 3), often while already in AUTO or together with mission logic; for “go fly the mission” use **`start_mission`**.
   - `goto_location` — guided reposition; **requires** `params`: `{"lat_deg": <float>, "lon_deg": <float>, "alt_m": <float>}` where `alt_m` is **relative to home** (meters), same convention as the TUI interrupt reposition path.
   - `move_forward` — body-frame forward velocity; optional `params`: `{"speed_m_s": 3}` (default 3 m/s).
   - `return_to_home` — RTL (TUI `r`).
@@ -70,8 +70,8 @@ Choose `"category": "drone"` only when the user clearly asks for a **concrete dr
 
 - "Arm the drone" → `{"category":"drone","name":"arm"}`
 - "Take off to 15 meters" / "Take off now" / "Launch the drone" → `{"category":"drone","name":"takeoff","params":{"altitude_m":15}}` (omit `params` for default altitude; **do not** also emit `arm` or `set_mode_guided` for the same takeoff intent)
-- "Switch to auto and start the mission" / "Run the uploaded mission" → `start_mission`
-- "Go to waypoint index 2" → `{"category":"drone","name":"mission_set_current","params":{"seq":2}}` (only if the user gave a specific index)
+- "Switch to auto and start the mission" / "Run the uploaded mission" / "Follow the waypoints" / "Fly the planned route" / "Execute the mission on the drone" → `start_mission` (mission must already be on the FC)
+- "Go to waypoint index 2" / "Skip to waypoint 2" → `{"category":"drone","name":"mission_set_current","params":{"seq":2}}` (only when the user gives a **numeric** item index; then they may still need `start_mission` or AUTO if not already flying the mission)
 - "Fly to 37.12, -122.1 at 30 meters above home" → `{"category":"drone","name":"goto_location","params":{"lat_deg":37.12,"lon_deg":-122.1,"alt_m":30}}` (only when all numbers are explicit in the message)
 - "Move the drone forward a bit" → `move_forward`
 - "Just hover in place for now" → `hover`
