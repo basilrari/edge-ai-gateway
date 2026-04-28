@@ -12,7 +12,7 @@ pub struct Orchestrator {
     pub override_until: Option<Instant>,
     /// Last command category ("drone" or "model") from a tool call; None when idle/none.
     pub last_command_category: Option<String>,
-    /// Last command name (e.g. "take_off", "activate_human_detection_yolo"); None when idle/none.
+    /// Last command name (e.g. "takeoff", "human_detect"); None when idle/none.
     pub last_command_name: Option<String>,
 }
 

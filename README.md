@@ -45,7 +45,7 @@ Request body: JSON matching one of these shapes:
 - **Infer** (run LLM; returns proposal with optional `pending_approval: true`):  
   `{"Infer": {"prompt": "user message"}}`
 - **ApplyTool** (after user accepts on frontend; applies tool and sends to Python when category is `"model"`):  
-  `{"ApplyTool": {"category": "model", "tool_name": "activate_human_detection_yolo"}}`
+  `{"ApplyTool": {"category": "model", "tool_name": "human_detect"}}`
 - **Override** (force model for a period):  
   `{"Override": {"model": "vision", "timeout_sec": 60}}` — `timeout_sec` optional (default 60)
 - **ClearOverride**:  
@@ -55,7 +55,7 @@ Response: JSON with **state**, **model**, **override_active**, **category**, **t
 
 ## Tool Names (reference)
 
-- **Model**: `activate_human_detection_yolo`, `activate_flood_segmentation`, `activate_human_behaviour_analysis`, `share_with_swarm`, `activate_flood_classification`
+- **Model**: `human_detect`, `flood_seg`, `flood_class` (short names; see `llm.rs` system prompt).
 - **Drone**: `move_forward`, `hover`, `return_to_home`, `land_immediately`, `circle_search`
 
 For full request/response contracts and examples for frontend or agent use, see **AGENTS.md**.

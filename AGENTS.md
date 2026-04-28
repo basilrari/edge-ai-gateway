@@ -47,7 +47,7 @@ This file defines the **exact API contract** (inputs and outputs) and **how the 
   "state": "ACTIVE",
   "model": "vision",
   "override_active": false,
-  "active_command": "model: activate_human_detection_yolo",
+  "active_command": "model: human_detect",
   "latency_ms": 12,
   "llm_latency_ms": 8,
   "memory_estimate_mb": 12.5
@@ -97,7 +97,7 @@ When nothing has been run yet or after clear override:
 {
   "ApplyTool": {
     "category": "model",
-    "tool_name": "activate_human_detection_yolo"
+    "tool_name": "human_detect"
   }
 }
 ```
@@ -129,7 +129,7 @@ When nothing has been run yet or after clear override:
 | `model`           | string \| null | Current model or `null`. |
 | `override_active` | bool   | Whether an override is active. |
 | `category`        | string \| null | Tool category: `"drone"` or `"model"` (only set when Infer ran and a tool was parsed). |
-| `tool_name`       | string \| null | Tool name (e.g. `"move_forward"`, `"activate_human_detection_yolo"`). |
+| `tool_name`       | string \| null | Tool name (e.g. `"move_forward"`, `"human_detect"`). |
 | `pending_approval` | bool   | When `true`, this is a **proposal** only; frontend shows Accept/Reject. Only **ApplyTool** applies the tool and sends to Python. |
 | `llm_response`    | string | Raw LLM response body (or error message). |
 | `action_taken`    | string | Short description of what was done (e.g. `"Drone command: move_forward"`, `"override_set"`). |
@@ -144,10 +144,10 @@ When nothing has been run yet or after clear override:
   "model": null,
   "override_active": false,
   "category": "model",
-  "tool_name": "activate_human_detection_yolo",
+  "tool_name": "human_detect",
   "pending_approval": true,
   "llm_response": "...",
-  "action_taken": "Python worker will activate: activate_human_detection_yolo",
+  "action_taken": "Python worker will activate: human_detect",
   "latency_ms": 120,
   "llm_latency_ms": 95
 }
@@ -161,10 +161,10 @@ When nothing has been run yet or after clear override:
   "model": "vision",
   "override_active": false,
   "category": "model",
-  "tool_name": "activate_human_detection_yolo",
+  "tool_name": "human_detect",
   "pending_approval": false,
   "llm_response": "",
-  "action_taken": "Python worker will activate: activate_human_detection_yolo",
+  "action_taken": "Python worker will activate: human_detect",
   "latency_ms": 12,
   "llm_latency_ms": 0
 }
@@ -207,7 +207,7 @@ When nothing has been run yet or after clear override:
 
 ## Tool names reference
 
-- **model**: `activate_human_detection_yolo`, `activate_flood_segmentation`, `activate_human_behaviour_analysis`, `share_with_swarm`, `activate_flood_classification`
+- **model**: `human_detect`, `flood_seg`, `flood_class`
 - **drone**: `move_forward`, `hover`, `return_to_home`, `land_immediately`, `circle_search`
 
 Use **GET /status** and the **active_command** field to show the current drone or model command in the UI; use **POST /infer** to send user prompts or override/clear-override.
