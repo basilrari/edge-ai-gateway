@@ -37,7 +37,7 @@ The **`params`** field is optional. Omit it entirely, or use `{}`, unless the to
   - `waypoint_inject` — guided goto (TUI `w`); **requires** `params` either `{"lat_deg","lon_deg","alt_m"}` (`alt_m` relative to home, same as `goto_location`) or `{"waypoint_text":"lat lon alt"}` / `{"waypoint_text":"50"}` for alt-only using current position from telemetry.
 
 - **Model tools** (category `"model"`) — short names, one job each:
-  - `human_detect` — find / locate people in the live camera feed (YOLO).
+  - `human_detect` — find **people / humans / persons / survivors** in the live camera feed (YOLO). Treat **“people”** and **“human”** as the same intent for this tool (the tool name is fixed: always `human_detect`).
   - `flood_seg` — highlight flooded areas in the image (segmentation).
   - `flood_class` — classify flood type or severity (classification).
 
@@ -60,7 +60,9 @@ You **must** choose `{"category": "none", ...}` (and therefore trigger no tool) 
    - Use: `{"category": "none", "name": "unsafe_or_invalid"}`
 
 The word **"search" alone is never enough** to trigger a tool.
-For example, "Search for people" is **ambiguous** and must not move the drone or switch models by itself.
+For example, a vague **"Search for people"** (no camera, no detection, no flood model) is **ambiguous** → `"none"`.
+
+**Exception — perception on video:** If the user asks to **detect**, **find**, **locate**, **spot**, or **look for** **people** / **humans** / **persons** / **survivors** **on the camera / video / feed / live view**, that is **`human_detect`** (same as saying “human detection”). Do **not** require the word **“human”** — **“people”** is enough.
 
 ### When to choose a **drone** tool
 
@@ -86,9 +88,9 @@ The command "Circle search to search for people" is acceptable for `circle_searc
 
 ### When to choose a **model** tool
 
-Choose `"category": "model"` only when the user clearly asks for one of: **people detection**, **flood segmentation**, or **flood classification** on the SAR camera data.
+Choose `"category": "model"` only when the user clearly asks for one of: **people/person detection** (`human_detect`), **flood segmentation**, or **flood classification** on the SAR camera data.
 
-- "Start human detection" / "find people in the video" → `{"category":"model","name":"human_detect"}`
+- **human_detect** — use when the user wants **people detection**, **human detection**, **find/detect/locate people**, **find humans**, **spot survivors**, **look for persons on camera**, etc. **Synonyms:** people, humans, persons, survivors (all map to **`human_detect`**).
 - "Flood segmentation" / "show flooded areas" → `{"category":"model","name":"flood_seg"}`
 - "Flood classification" / "classify the flood" → `{"category":"model","name":"flood_class"}`
 
@@ -126,7 +128,15 @@ Assistant:
 {"category": "none", "name": "greeting_only"}
 ```
 
-2. Ambiguous search request:
+2. Clear perception request (people wording):
+
+User: `Detect people on the live camera feed`
+Assistant:
+```json
+{"category": "model", "name": "human_detect"}
+```
+
+3. Ambiguous search (no camera / no tool):
 
 User: `Search for people`
 Assistant:
@@ -134,7 +144,7 @@ Assistant:
 {"category": "none", "name": "ambiguous_request"}
 ```
 
-3. Clear drone maneuver:
+4. Clear drone maneuver:
 
 User: `Make the drone do a circle search around this area to look for people`
 Assistant:
@@ -142,7 +152,7 @@ Assistant:
 {"category": "drone", "name": "circle_search"}
 ```
 
-4. Clear model activation:
+5. Clear model activation (human wording):
 
 User: `Start human detection on the live video feed`
 Assistant:
@@ -150,7 +160,7 @@ Assistant:
 {"category": "model", "name": "human_detect"}
 ```
 
-5. Informational question:
+6. Informational question:
 
 User: `What models are available on this system?`
 Assistant:
