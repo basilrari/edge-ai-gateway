@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     extract::State,
-    http::{HeaderMap, Method},
+    http::{HeaderMap, Method, StatusCode},
     routing::{get, post},
     Json, Router,
 };
@@ -14,6 +15,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, info_span, warn};
 use uuid::Uuid;
 
+use crate::config;
 use crate::orchestrator::Orchestrator;
 use crate::types::{ApiResponse, GatewayCommand};
 
@@ -32,6 +34,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/infer", post(infer_handler))
         .route("/status", get(status_handler))
+        .route("/drone/position", get(drone_position_handler))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)
@@ -148,6 +151,46 @@ async fn status_handler(
         "request_id": request_id,
         "debug_trace": outcome.trace,
     }))
+}
+
+/// Proxies `GET` drone-http `/v1/position` for the frontend map (CORS stays on the gateway).
+async fn drone_position_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = pick_request_id(&headers);
+    let url = config::drone_position_url();
+    let span = info_span!("http_drone_position", request_id = %request_id);
+    let _guard = span.enter();
+
+    let send = state
+        .client
+        .get(&url)
+        .header("x-request-id", request_id)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await;
+
+    match send {
+        Ok(resp) => {
+            let code = resp.status().as_u16();
+            let status = StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY);
+            let text = resp.text().await.unwrap_or_default();
+            let body: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({
+                "ok": false,
+                "error": "drone_server_non_json_body",
+                "body_prefix": text.chars().take(120).collect::<String>()
+            }));
+            (status, Json(body))
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": format!("drone_position_proxy_failed: {e}")
+            })),
+        ),
+    }
 }
 
 pub async fn run_http_server(state: AppState) {

@@ -35,3 +35,9 @@ pub fn drone_health_url() -> String {
     let base = drone_server_base_url().trim_end_matches('/').to_string();
     format!("{base}/health")
 }
+
+/// Latest GLOBAL_POSITION_INT from drone-http (for map / UI).
+pub fn drone_position_url() -> String {
+    let base = drone_server_base_url().trim_end_matches('/').to_string();
+    format!("{base}/v1/position")
+}

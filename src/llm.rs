@@ -42,7 +42,7 @@ The **`params`** field is optional on each task. When present, it must be a JSON
   - `takeoff` — one-step launch: the vehicle is set to **GUIDED**, **armed**, then **NAV_TAKEOFF** (optional `params`: `{"altitude_m": 10}`). Use this when the user says things like “take off now”, “launch”, or “get airborne” — you do **not** need separate `set_mode_guided` / `arm` unless they asked only to arm or only to change mode.
   - `start_mission` — **Same as TUI key `m`**: switches to **AUTO** and sends **MISSION_START** to fly the mission. On **drone-http**, the gateway first applies the **same checks as the TUI** (mission must be **downloaded on the MAVLink link** after connect, and the mission must include a **NAV_TAKEOFF** item before other nav waypoints — otherwise the tool fails with the same class of message the TUI prints when `m` is blocked). The mission must still exist on the **flight controller** (upload via Mission Planner / QGC if needed). Use for “run / follow / execute the mission” — **not** `mission_set_current` alone.
   - `mission_set_current` — **Only** sets which mission item is “current” (`MAV_CMD_DO_SET_MISSION_CURRENT`); **requires** `params`: `{"seq": <number>}` (0-based index). It does **not** load a mission onto the FC and does **not** by itself start AUTO navigation. Use when the user names a **specific waypoint index** (e.g. “skip to waypoint 3” → `seq` 3), often while already in AUTO or together with mission logic; for “go fly the mission” use **`start_mission`**.
-  - `goto_location` — guided reposition; **requires** `params`: `{"lat_deg": <float>, "lon_deg": <float>, "alt_m": <float>}` where `alt_m` is **relative to home** (meters), same convention as the TUI interrupt reposition path.
+  - `goto_location` — guided reposition; **requires** `params`: `{"lat_deg": <float>, "lon_deg": <float>, "alt_m": <float>}` where `alt_m` is **relative to home** (meters), same convention as the TUI interrupt reposition path. If the vehicle is **disarmed or on the ground**, **drone-http** automatically runs **GUIDED + arm + takeoff** before the goto, so you **do not** need a separate `takeoff` step for a simple “fly to these coordinates” request. Optional `takeoff_altitude_m` in the same `params` object can raise the climb target (otherwise sensible defaults apply).
   - `move_forward` — body-frame forward velocity; optional `params`: `{"speed_m_s": 3}` (default 3 m/s).
   - `return_to_home` — RTL (TUI `r`).
   - `land_immediately` — land (TUI `l`).
@@ -50,7 +50,7 @@ The **`params`** field is optional on each task. When present, it must be a JSON
   - `retry_streams` — best-effort mission list + data stream re-request (similar to TUI `s` nudge; does not replace full TUI recv logic).
   - `mission_interrupt` — pause AUTO mission and hold at current position (TUI `i`); needs GPS + home; drone-http keeps a mission mirror + recv thread.
   - `mission_resume` — after interrupt, upload mission snapshot and resume (TUI `c`); no extra params.
-  - `waypoint_inject` — guided goto (TUI `w`); **requires** `params` either `{"lat_deg","lon_deg","alt_m"}` (`alt_m` relative to home, same as `goto_location`) or `{"waypoint_text":"lat lon alt"}` / `{"waypoint_text":"50"}` for alt-only using current position from telemetry.
+  - `waypoint_inject` — guided goto (TUI `w`); **requires** `params` either `{"lat_deg","lon_deg","alt_m"}` (`alt_m` relative to home, same as `goto_location`) or `{"waypoint_text":"lat lon alt"}` / `{"waypoint_text":"50"}` for alt-only using current position from telemetry. Same **auto takeoff** behavior as `goto_location` when landed/disarmed.
 
 - **Model tools** (category `"model"`) — short names, one job each:
   - `human_detect` — find **people / humans / persons / survivors** in the live camera feed (YOLO). Treat **“people”** and **“human”** as the same intent for this tool (the tool name is fixed: always `human_detect`).
@@ -88,6 +88,7 @@ When the user clearly asks for **more than one action in order** (e.g. fly somew
 - **Do not** exceed **5** tasks.
 - Example: “Go to 37.12, -122.1 at 30 m above home **and** detect people on the live camera” →
   `{"tasks":[{"category":"drone","name":"goto_location","params":{"lat_deg":37.12,"lon_deg":-122.1,"alt_m":30}},{"category":"model","name":"human_detect"}]}`
+- Do **not** prepend a `takeoff` task before `goto_location` or `waypoint_inject` for a single “go to X” command from the ground — **drone-http** handles takeoff automatically. Use a separate `takeoff` task only when the user clearly asks for takeoff **by itself** or as an explicit first step (e.g. “take off, then …” with different timing intent).
 - Example: “Circle search **and** run human detection” →
   `{"tasks":[{"category":"drone","name":"circle_search"},{"category":"model","name":"human_detect"}]}`
 

@@ -27,6 +27,7 @@ Server listens on port **3000**.
 |--------|--------|-------------|
 | `GET`  | `/status` | Current state, model, override flag, **active command** (drone/model tool or `none`), and latency/memory. |
 | `POST` | `/infer`  | Send a command (infer with prompt, ApplyTool, ApplyToolSequence, override, or clear override). Returns state, model, override, category/tool name, optional `tools`, LLM response, action taken, and latencies. |
+| `GET`  | `/drone/position` | Proxies drone-http `GET /v1/position` (lat/lon from last `GLOBAL_POSITION_INT`) for the frontend map. |
 
 ### GET /status
 
