@@ -1,5 +1,7 @@
 use crate::config;
-use crate::llm::{parse_tool_call, ChatMessage, ChatRequest, ChatResponse, SAR_SYSTEM_PROMPT};
+use crate::llm::{
+    parse_tool_sequence, ChatMessage, ChatRequest, ChatResponse, LlmToolPayload, SAR_SYSTEM_PROMPT,
+};
 use crate::types::{CommandOutcome, GatewayCommand, GatewayState, ToolCall};
 use reqwest::Client;
 use std::time::{Duration, Instant};
@@ -104,6 +106,7 @@ impl Orchestrator {
         let mut drone_http_ms: Option<u64> = None;
         let mut drone_error: Option<String> = None;
         let mut tool_params: Option<serde_json::Value> = None;
+        let mut tools_proposal: Option<Vec<ToolCall>> = None;
 
         match cmd {
             GatewayCommand::Infer { prompt } => {
@@ -192,30 +195,75 @@ impl Orchestrator {
                                         content.len()
                                     ));
 
-                                    match parse_tool_call(&content) {
-                                        Ok(tool) => {
-                                            if tool.category == "none" {
+                                    match parse_tool_sequence(&content) {
+                                        Ok(LlmToolPayload::NoneReason(reason)) => {
+                                            tool_params = None;
+                                            tools_proposal = None;
+                                            action_taken = reason.clone();
+                                            category = Some("none".to_string());
+                                            tool_name = Some(reason);
+                                            new_state = GatewayState::IDLE;
+                                            self.last_command_category = None;
+                                            self.last_command_name = None;
+                                            trace.push("stage=tool_none".into());
+
+                                            info!(
+                                                action = "tool_none",
+                                                request_id = %request_id,
+                                                state = ?new_state,
+                                                llm_latency_ms,
+                                                http_status = %status,
+                                                reason = "LLM returned category none; no tool activated"
+                                            );
+                                        }
+                                        Ok(LlmToolPayload::Tasks(tasks)) => {
+                                            if tasks.is_empty() {
                                                 tool_params = None;
-                                                action_taken = tool.name.clone();
+                                                tools_proposal = None;
+                                                action_taken = "ambiguous_request".to_string();
                                                 category = Some("none".to_string());
-                                                tool_name = Some(tool.name.clone());
+                                                tool_name = Some("ambiguous_request".into());
                                                 new_state = GatewayState::IDLE;
                                                 self.last_command_category = None;
                                                 self.last_command_name = None;
-                                                trace.push("stage=tool_none".into());
+                                                trace.push("stage=tool_empty_tasks".into());
+                                            } else if tasks.len() > 1 {
+                                                let first = &tasks[0];
+                                                tool_params = first.params.clone();
+                                                tools_proposal = Some(tasks.clone());
+                                                category = Some(first.category.clone());
+                                                tool_name = Some(first.name.clone());
+                                                let summary = tasks
+                                                    .iter()
+                                                    .map(|t| format!("{}:{}", t.category, t.name))
+                                                    .collect::<Vec<_>>()
+                                                    .join(" -> ");
+                                                action_taken = format!(
+                                                    "Sequence proposal ({} steps): {}",
+                                                    tasks.len(),
+                                                    summary
+                                                );
+                                                pending_approval = true;
+                                                trace.push(format!(
+                                                    "stage=tool_proposal_sequence steps={} first={:?}",
+                                                    tasks.len(),
+                                                    tool_name
+                                                ));
 
                                                 info!(
-                                                    action = "tool_none",
+                                                    action = "tool_proposal_sequence",
                                                     request_id = %request_id,
-                                                    state = ?new_state,
-                                                    name = %tool.name,
+                                                    steps = tasks.len(),
+                                                    category = ?category,
+                                                    tool_name = ?tool_name,
                                                     llm_latency_ms,
                                                     http_status = %status,
-                                                    reason = "LLM returned category none; no tool activated"
+                                                    reason = "multi-step ToolCall proposal for approval"
                                                 );
                                             } else {
+                                                let tool = tasks.into_iter().next().expect("len 1");
                                                 tool_params = tool.params.clone();
-                                                // Proposal only: do not update self.current_model or last_command_*.
+                                                tools_proposal = None;
                                                 let (_, act, cat, tool_n) =
                                                     self.handle_tool_call(tool, override_active);
                                                 action_taken = act;
@@ -331,80 +379,29 @@ impl Orchestrator {
                 }
 
                 if cat == "drone" {
-                    let url = config::drone_apply_tool_url();
-                    trace.push(format!("stage=drone_http_begin url={url}"));
-                    let t0 = Instant::now();
-                    let params_json = match apply_params.as_ref() {
-                        None | Some(serde_json::Value::Null) => serde_json::json!({}),
-                        Some(v) if v.is_object() => v.clone(),
-                        Some(_) => serde_json::json!({}),
-                    };
-                    let body = serde_json::json!({ "tool": name, "params": params_json });
-                    let send_result = client
-                        .post(&url)
-                        .header("x-request-id", request_id)
-                        .json(&body)
-                        .timeout(Duration::from_secs(30))
-                        .send()
+                    let r = drone_apply_via_http(client, request_id, name, apply_params, &mut trace)
                         .await;
-                    let elapsed_ms = t0.elapsed().as_millis() as u64;
-                    drone_http_ms = Some(elapsed_ms);
-
-                    match send_result {
-                        Ok(resp) => {
-                            drone_http_status = Some(resp.status().as_u16());
-                            let status_u = resp.status();
-                            let body_text = resp.text().await.unwrap_or_default();
-                            trace.push(format!(
-                                "stage=drone_http_response status={} body_len={}",
-                                status_u.as_u16(),
-                                body_text.len()
-                            ));
-
-                            let parsed: Result<serde_json::Value, _> =
-                                serde_json::from_str(&body_text);
-                            match parsed {
-                                Ok(v) => {
-                                    let ok = v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
-                                    if ok {
-                                        trace.push("stage=drone_mavlink_ok".into());
-                                        action_taken =
-                                            format!("drone_http_ok:{} ms={}", name, elapsed_ms);
-                                    } else {
-                                        let err = v
-                                            .get("error")
-                                            .and_then(|x| x.as_str())
-                                            .unwrap_or("ok=false without error field")
-                                            .to_string();
-                                        drone_error = Some(format!(
-                                            "drone_server_http={} error={}",
-                                            status_u.as_u16(),
-                                            err
-                                        ));
-                                        trace.push(format!("stage=drone_mavlink_rejected {err}"));
-                                        action_taken = format!(
-                                            "drone_http_rejected:{} http={}",
-                                            name,
-                                            status_u.as_u16()
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    drone_error = Some(format!(
-                                        "drone_server_bad_json http={} err={e} body_prefix={}",
-                                        status_u.as_u16(),
-                                        body_text.chars().take(200).collect::<String>()
-                                    ));
-                                    trace.push("stage=drone_response_not_json".into());
-                                    action_taken =
-                                        format!("drone_http_bad_json:{} ", name);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            drone_error = Some(format!("drone_http_transport: {e}"));
-                            trace.push(format!("stage=drone_http_transport_err {e}"));
+                    drone_http_status = Some(r.http_status);
+                    drone_http_ms = Some(r.elapsed_ms);
+                    if r.mavlink_ok {
+                        trace.push(format!("stage=drone_mavlink_ok tool={name}"));
+                        action_taken = format!("drone_http_ok:{} ms={}", name, r.elapsed_ms);
+                    } else {
+                        let err = r
+                            .error_detail
+                            .unwrap_or_else(|| "unknown drone error".to_string());
+                        drone_error = Some(err.clone());
+                        trace.push(format!("stage=drone_mavlink_rejected {err}"));
+                        if err.starts_with("drone_http_transport") {
                             action_taken = format!("drone_http_transport_failed:{name}");
+                        } else if err.starts_with("drone_server_bad_json") {
+                            action_taken = format!("drone_http_bad_json:{name}");
+                        } else {
+                            action_taken = format!(
+                                "drone_http_rejected:{} http={}",
+                                name,
+                                r.http_status
+                            );
                         }
                     }
                 }
@@ -417,6 +414,114 @@ impl Orchestrator {
                     tool_name = %name,
                     reason = "tool applied after user acceptance"
                 );
+            }
+            GatewayCommand::ApplyToolSequence { tools } => {
+                trace.push(format!(
+                    "command=ApplyToolSequence steps={}",
+                    tools.len()
+                ));
+
+                if tools.is_empty() {
+                    action_taken = "apply_sequence_empty".to_string();
+                    trace.push("stage=apply_sequence_empty".into());
+                    warn!(
+                        action = "apply_tool_sequence_empty",
+                        request_id = %request_id,
+                        reason = "ApplyToolSequence received empty tools"
+                    );
+                } else {
+                    let override_active = matches!(self.current_state, GatewayState::OVERRIDE_ACTIVE)
+                        && self
+                            .override_until
+                            .map(|t| t > Instant::now())
+                            .unwrap_or(false);
+
+                    new_state = GatewayState::ACTIVE;
+                    let mut last_success: Option<ToolCall> = None;
+                    let mut stopped_at: Option<usize> = None;
+
+                    for (idx, tool) in tools.iter().enumerate() {
+                        if tool.category == "drone" {
+                            let r = drone_apply_via_http(
+                                client,
+                                request_id,
+                                &tool.name,
+                                &tool.params,
+                                &mut trace,
+                            )
+                            .await;
+                            drone_http_status = Some(r.http_status);
+                            drone_http_ms = Some(r.elapsed_ms);
+                            if r.mavlink_ok {
+                                last_success = Some(tool.clone());
+                                trace.push(format!(
+                                    "stage=sequence_step_ok idx={} tool={}",
+                                    idx, tool.name
+                                ));
+                            } else {
+                                let err = r.error_detail.unwrap_or_else(|| {
+                                    "drone step failed without error detail".to_string()
+                                });
+                                drone_error = Some(err);
+                                stopped_at = Some(idx);
+                                action_taken = format!(
+                                    "sequence_stopped_at_step_{idx}_tool_{}",
+                                    tool.name
+                                );
+                                trace.push(format!("stage=sequence_stopped idx={idx}"));
+                                break;
+                            }
+                        } else if tool.category == "model" {
+                            let (maybe_model, act, _c, _n) =
+                                self.handle_tool_call(tool.clone(), override_active);
+                            if let Some(m) = maybe_model {
+                                self.current_model = Some(m);
+                            }
+                            trace.push(format!(
+                                "stage=sequence_model_step idx={} action={}",
+                                idx, act
+                            ));
+                            info!(
+                                action = "apply_sequence_model_step",
+                                request_id = %request_id,
+                                step = idx,
+                                tool_name = %tool.name,
+                                reason = "model path (python-worker) not wired yet"
+                            );
+                            last_success = Some(tool.clone());
+                        } else {
+                            trace.push(format!(
+                                "stage=sequence_skip_unknown_category idx={} cat={}",
+                                idx, tool.category
+                            ));
+                        }
+                    }
+
+                    if let Some(ref ok_tool) = last_success {
+                        self.last_command_category = Some(ok_tool.category.clone());
+                        self.last_command_name = Some(ok_tool.name.clone());
+                        category = Some(ok_tool.category.clone());
+                        tool_name = Some(ok_tool.name.clone());
+                    }
+
+                    if stopped_at.is_none() {
+                        action_taken = format!("sequence_ok:{}_steps", tools.len());
+                        trace.push("stage=sequence_complete".into());
+                        info!(
+                            action = "apply_tool_sequence_complete",
+                            request_id = %request_id,
+                            steps = tools.len(),
+                            reason = "all sequence steps applied"
+                        );
+                    } else {
+                        info!(
+                            action = "apply_tool_sequence_partial",
+                            request_id = %request_id,
+                            stopped_at = ?stopped_at,
+                            reason = "sequence stopped on first drone step failure"
+                        );
+                    }
+                }
             }
             GatewayCommand::Override { model, timeout_sec } => {
                 trace.push("command=Override".into());
@@ -519,6 +624,99 @@ impl Orchestrator {
             drone_error,
             trace,
             tool_params,
+            tools: tools_proposal,
         }
+    }
+}
+
+struct DroneApplyResult {
+    http_status: u16,
+    elapsed_ms: u64,
+    mavlink_ok: bool,
+    error_detail: Option<String>,
+}
+
+async fn drone_apply_via_http(
+    client: &Client,
+    request_id: &str,
+    name: &str,
+    apply_params: &Option<serde_json::Value>,
+    trace: &mut Vec<String>,
+) -> DroneApplyResult {
+    let url = config::drone_apply_tool_url();
+    trace.push(format!("stage=drone_http_begin tool={name} url={url}"));
+    let t0 = Instant::now();
+    let params_json = match apply_params.as_ref() {
+        None | Some(serde_json::Value::Null) => serde_json::json!({}),
+        Some(v) if v.is_object() => v.clone(),
+        Some(_) => serde_json::json!({}),
+    };
+    let body = serde_json::json!({ "tool": name, "params": params_json });
+    let send_result = client
+        .post(&url)
+        .header("x-request-id", request_id)
+        .json(&body)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await;
+    let elapsed_ms = t0.elapsed().as_millis() as u64;
+
+    match send_result {
+        Ok(resp) => {
+            let status_u = resp.status();
+            let status_code = status_u.as_u16();
+            let body_text = resp.text().await.unwrap_or_default();
+            trace.push(format!(
+                "stage=drone_http_response tool={name} status={} body_len={}",
+                status_code,
+                body_text.len()
+            ));
+
+            let parsed: Result<serde_json::Value, _> = serde_json::from_str(&body_text);
+            match parsed {
+                Ok(v) => {
+                    let ok = v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
+                    if ok {
+                        DroneApplyResult {
+                            http_status: status_code,
+                            elapsed_ms,
+                            mavlink_ok: true,
+                            error_detail: None,
+                        }
+                    } else {
+                        let err = v
+                            .get("error")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("ok=false without error field")
+                            .to_string();
+                        DroneApplyResult {
+                            http_status: status_code,
+                            elapsed_ms,
+                            mavlink_ok: false,
+                            error_detail: Some(format!(
+                                "drone_server_http={} error={}",
+                                status_code, err
+                            )),
+                        }
+                    }
+                }
+                Err(e) => DroneApplyResult {
+                    http_status: status_code,
+                    elapsed_ms,
+                    mavlink_ok: false,
+                    error_detail: Some(format!(
+                        "drone_server_bad_json http={} err={e} body_prefix={}",
+                        status_code,
+                        body_text.chars().take(200).collect::<String>()
+                    )),
+                },
+            }
+        }
+        Err(e) => DroneApplyResult {
+            http_status: 0,
+            elapsed_ms,
+            mavlink_ok: false,
+            error_detail: Some(format!("drone_http_transport: {e}")),
+        },
     }
 }

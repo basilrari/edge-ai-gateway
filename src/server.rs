@@ -82,6 +82,7 @@ async fn infer_handler(
                 drone_http_ms: None,
                 drone_error: None,
                 tool_params: None,
+                tools: None,
             });
         }
     };
@@ -116,6 +117,7 @@ async fn infer_handler(
         drone_http_ms: outcome.drone_http_ms,
         drone_error: outcome.drone_error,
         tool_params: outcome.tool_params,
+        tools: outcome.tools,
     };
 
     Json(api)

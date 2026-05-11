@@ -40,6 +40,10 @@ pub enum GatewayCommand {
         #[serde(default)]
         params: Option<serde_json::Value>,
     },
+    /// Apply an ordered list of tools after one operator approval (multi-step LLM proposal).
+    ApplyToolSequence {
+        tools: Vec<ToolCall>,
+    },
     Override { model: String, timeout_sec: Option<u64> },
     ClearOverride,
     Status,
@@ -52,7 +56,7 @@ pub struct ApiResponse {
     pub override_active: bool,
     pub category: Option<String>,
     pub tool_name: Option<String>,
-    /// When true, this response is a proposal: frontend should show Accept/Reject; only ApplyTool sends to Python.
+    /// When true, this response is a proposal: frontend should show Accept/Reject; apply with **ApplyTool** (one step) or **ApplyToolSequence** (multi-step).
     pub pending_approval: bool,
     pub llm_response: String,
     pub action_taken: String,
@@ -73,6 +77,9 @@ pub struct ApiResponse {
     /// When `pending_approval` is true, optional structured args for the next `ApplyTool` (from LLM).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_params: Option<serde_json::Value>,
+    /// When `pending_approval` is true and the LLM proposed more than one step, full ordered tasks for `ApplyToolSequence`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolCall>>,
 }
 
 /// Result of [`crate::orchestrator::Orchestrator::process_command`].
@@ -91,4 +98,5 @@ pub struct CommandOutcome {
     pub drone_error: Option<String>,
     pub trace: Vec<String>,
     pub tool_params: Option<serde_json::Value>,
+    pub tools: Option<Vec<ToolCall>>,
 }

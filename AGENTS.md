@@ -7,7 +7,7 @@ This file defines the **exact API contract** (inputs and outputs) and **how the 
 ## Project context
 
 - **Code** is the SAR (Search and Rescue) drone repo. See [Code/README.md](../README.md) for the full architecture.
-- The **Gateway** sits between the **frontend** and the **LLM** / **Drone Server** / **Model Server**. It receives HTTP requests (prompts, ApplyTool, Override, ClearOverride), calls the LLM for inference, and routes accepted tools: **model** → Model Server (e.g. python-worker); **drone** → Drone Server ([drone-server/](../drone-server/)) when wired. The Gateway does not implement MAVLink or drone logic; it only routes commands and keeps state (IDLE, ACTIVE, OVERRIDE_ACTIVE).
+- The **Gateway** sits between the **frontend** and the **LLM** / **Drone Server** / **Model Server**. It receives HTTP requests (prompts, ApplyTool, ApplyToolSequence, Override, ClearOverride), calls the LLM for inference, and routes accepted tools: **model** → Model Server (e.g. python-worker); **drone** → Drone Server ([drone-server/](../drone-server/)) via HTTP. The Gateway does not implement MAVLink or drone logic; it only routes commands and keeps state (IDLE, ACTIVE, OVERRIDE_ACTIVE).
 
 ---
 
@@ -72,7 +72,7 @@ When nothing has been run yet or after clear override:
 
 ## 2. POST /infer
 
-**Purpose**: Send a command: either **infer** (user prompt → LLM → tool applied), **override** (force model for a period), or **clear override**.
+**Purpose**: Send a command: **Infer** (user prompt → LLM → proposed tool(s)), **ApplyTool** / **ApplyToolSequence** (after operator accepts), **override**, or **clear override**.
 
 **Request**
 
@@ -91,13 +91,28 @@ When nothing has been run yet or after clear override:
 }
 ```
 
-**ApplyTool** (after user accepts on frontend; applies tool and sends to Python when category is `"model"`):
+**ApplyTool** (after user accepts a **single-step** proposal; applies one tool):
 
 ```json
 {
   "ApplyTool": {
     "category": "model",
     "tool_name": "human_detect"
+  }
+}
+```
+
+Optional **`params`** (object) for tools that need structured arguments, e.g. `goto_location`.
+
+**ApplyToolSequence** (after user accepts a **multi-step** proposal; runs steps **in order**; stops on first failed drone step):
+
+```json
+{
+  "ApplyToolSequence": {
+    "tools": [
+      { "category": "drone", "name": "goto_location", "params": { "lat_deg": 37.12, "lon_deg": -122.1, "alt_m": 30 } },
+      { "category": "model", "name": "human_detect" }
+    ]
   }
 }
 ```
@@ -128,9 +143,11 @@ When nothing has been run yet or after clear override:
 | `state`           | string | `"IDLE"` \| `"ACTIVE"` \| `"OVERRIDE_ACTIVE"` \| `"SWITCHING"`. |
 | `model`           | string \| null | Current model or `null`. |
 | `override_active` | bool   | Whether an override is active. |
-| `category`        | string \| null | Tool category: `"drone"` or `"model"` (only set when Infer ran and a tool was parsed). |
-| `tool_name`       | string \| null | Tool name (e.g. `"move_forward"`, `"human_detect"`). |
-| `pending_approval` | bool   | When `true`, this is a **proposal** only; frontend shows Accept/Reject. Only **ApplyTool** applies the tool and sends to Python. |
+| `category`        | string \| null | First step category when Infer ran: `"drone"` or `"model"` (for display / single-step ApplyTool). |
+| `tool_name`       | string \| null | First step tool name (e.g. `"goto_location"`, `"human_detect"`). |
+| `pending_approval` | bool   | When `true`, this is a **proposal** only; frontend shows Accept/Reject. Apply with **ApplyTool** (one step) or **ApplyToolSequence** (when **`tools`** has 2+ entries). |
+| `tools`           | array \| omitted | When `pending_approval` is true and the LLM proposed **multiple** steps, ordered `{ "category", "name", "params"? }` objects (max 5). Omitted for single-step proposals. |
+| `tool_params`     | object \| omitted | Params for the **first** step when needed (e.g. `goto_location`); also sent with **ApplyTool** on Accept. |
 | `llm_response`    | string | Raw LLM response body (or error message). |
 | `action_taken`    | string | Short description of what was done (e.g. `"Drone command: move_forward"`, `"override_set"`). |
 | `latency_ms`       | number | Total request latency (ms). |
@@ -148,6 +165,28 @@ When nothing has been run yet or after clear override:
   "pending_approval": true,
   "llm_response": "...",
   "action_taken": "Python worker will activate: human_detect",
+  "latency_ms": 120,
+  "llm_latency_ms": 95
+}
+```
+
+**Example (Infer — multi-step proposal)**
+
+```json
+{
+  "state": "IDLE",
+  "model": null,
+  "override_active": false,
+  "category": "drone",
+  "tool_name": "goto_location",
+  "pending_approval": true,
+  "tools": [
+    { "category": "drone", "name": "goto_location", "params": { "lat_deg": 37.12, "lon_deg": -122.1, "alt_m": 30 } },
+    { "category": "model", "name": "human_detect" }
+  ],
+  "tool_params": { "lat_deg": 37.12, "lon_deg": -122.1, "alt_m": 30 },
+  "llm_response": "...",
+  "action_taken": "Sequence proposal (2 steps): drone:goto_location -> model:human_detect",
   "latency_ms": 120,
   "llm_latency_ms": 95
 }
@@ -193,12 +232,12 @@ When nothing has been run yet or after clear override:
 
 1. **IDLE**: No model set, no active command; `active_command` is `"none"`.
 2. **Infer (prompt)**:
-   - Gateway sends the prompt (with system prompt) to the LLM at `http://localhost:8080/v1/chat/completions`.
-   - LLM is expected to return exactly one JSON tool: `{"category": "drone"|"model", "name": "<tool_name>"}` or category `"none"`.
-   - If the tool is drone or model, the gateway returns the response with **`pending_approval: true`** and does **not** update state or send to Python. The frontend shows Accept/Reject; only when the user accepts does the frontend send **ApplyTool**.
-   - If the tool is `"none"`, the gateway returns with `pending_approval: false` and may set state to IDLE.
-3. **ApplyTool (category, tool_name)**:
-   - Called by the frontend after the user accepts a proposal. Gateway updates state to **ACTIVE**, stores **category** and **tool_name** (so **GET /status** returns `active_command`). For category `"model"`, the gateway sends to the Python server (placeholder until gRPC/HTTP is wired). Model tools set internal model to `"vision"`; drone tools do not change model.
+   - Gateway sends the prompt (with system prompt in `llm.rs`) to the LLM at `http://localhost:8080/v1/chat/completions`.
+   - LLM returns JSON: preferred **`{"tasks":[...]}`** (up to **5** steps, each `category` + `name` + optional `params`), or legacy **`{"category":"drone"|"model"|"none","name":"..."}`**.
+   - If the result is one or more drone/model steps, the gateway returns **`pending_approval: true`**. For **2+** steps it also returns **`tools`**. It does **not** send to drone/model until the user accepts.
+   - If the result is **`none`**, the gateway returns `pending_approval: false` and may set state to IDLE.
+3. **ApplyTool** / **ApplyToolSequence**:
+   - After the user accepts: **ApplyTool** for a single-step proposal; **ApplyToolSequence** with the full **`tools`** array for multi-step. Gateway runs drone steps via **Drone Server** HTTP in order; on first drone failure it stops and reports **`drone_error`**. Model steps update internal model / placeholder python path. **`active_command`** reflects the **last successful** step (or remains unchanged if the first step fails).
 4. **Override**: Sets state to **OVERRIDE_ACTIVE** and forces the given **model** for **timeout_sec**; does not change `active_command` (that stays the last applied tool until cleared).
 5. **ClearOverride**: Resets to **IDLE**, clears model and **active_command** (so next **GET /status** returns `active_command: "none"`).
 6. **GET /status** never changes state; it returns current state, model, override flag, and **active_command** (last drone or model command, or `"none"`).
@@ -208,6 +247,6 @@ When nothing has been run yet or after clear override:
 ## Tool names reference
 
 - **model**: `human_detect`, `flood_seg`, `flood_class`
-- **drone**: `move_forward`, `hover`, `return_to_home`, `land_immediately`, `circle_search`
+- **drone**: see [src/llm.rs](src/llm.rs) system prompt and [drone-server/](../drone-server/) (e.g. `arm`, `takeoff`, `goto_location`, `circle_search`, `return_to_home`, …)
 
 Use **GET /status** and the **active_command** field to show the current drone or model command in the UI; use **POST /infer** to send user prompts or override/clear-override.
