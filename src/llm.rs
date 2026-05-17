@@ -42,7 +42,7 @@ The **`params`** field is optional on each task. When present, it must be a JSON
   - `takeoff` — **`MAV_CMD_NAV_TAKEOFF` only**. Use **after** `arm`. Include `params`: `{"altitude_m": <number>}` **only** when the user names a target height (meters above home). If they do **not** give a height (e.g. “take off now”), emit **`takeoff` with no `params`** (or `{}`) — **drone-http** uses the vehicle’s **current altitude above home** from telemetry. Do **not** invent a default altitude.
   - `start_mission` — **Same as TUI key `m`**: switches to **AUTO** and sends **MISSION_START** to fly the mission. On **drone-http**, the gateway first applies the **same checks as the TUI** (mission must be **downloaded on the MAVLink link** after connect, and the mission must include a **NAV_TAKEOFF** item before other nav waypoints — otherwise the tool fails with the same class of message the TUI prints when `m` is blocked). The mission must still exist on the **flight controller** (upload via Mission Planner / QGC if needed). Use for “run / follow / execute the mission” — **not** `mission_set_current` alone.
   - `mission_set_current` — **Only** sets which mission item is “current” (`MAV_CMD_DO_SET_MISSION_CURRENT`); **requires** `params`: `{"seq": <number>}` (0-based index). It does **not** load a mission onto the FC and does **not** by itself start AUTO navigation. Use when the user names a **specific waypoint index** (e.g. “skip to waypoint 3” → `seq` 3), often while already in AUTO or together with mission logic; for “go fly the mission” use **`start_mission`**.
-  - `goto_location` — guided **`COMMAND_INT` DO_REPOSITION** only; **requires** `params`: `{"lat_deg": <float>, "lon_deg": <float>, "alt_m": <float>}` where `alt_m` is **relative to home** (meters). **No** automatic takeoff or arm. From the ground, emit **`arm`**, **`takeoff`**, then **`goto_location`** when the user wants to fly to coordinates.
+  - `goto_location` — guided **`COMMAND_INT` DO_REPOSITION** only; **requires** `params`: `{"lat_deg": <float>, "lon_deg": <float>, "alt_m": <float>}` where `alt_m` is **relative to home** (meters). Use **`lon_deg`** (not `long`, `lon`, or `lat`). From the ground, emit **`arm`**, **`takeoff`**, then **`goto_location`** when the user wants to fly to coordinates.
   - `move_forward` — body-frame forward velocity; optional `params`: `{"speed_m_s": 3}` (default 3 m/s).
   - `return_to_home` — RTL (TUI `r`).
   - `land_immediately` — land (TUI `l`).
@@ -127,9 +127,11 @@ Choose `"category": "model"` only when the user clearly asks for one of: **peopl
 
 ### Output format
 
-- Output **only** the JSON object, with no extra text, no explanations, and no Markdown.
-- Do **not** include trailing comments.
+- Output **only** one **strict JSON** object (double-quoted keys/strings, no trailing commas, no comments, no `lat`/`long` shorthand in params — use **`lat_deg`**, **`lon_deg`**, **`alt_m`**).
+- Do **not** wrap in Markdown unless unavoidable; the gateway strips fences but invalid JSON fails.
 - Prefer **`{"tasks":[...]}`** for any response that applies tools (including a single step).
+- Example: user says go to 23.563206, 120.477799 at 30 m →
+  `{"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff","params":{"altitude_m":30}},{"category":"drone","name":"goto_location","params":{"lat_deg":23.563206,"lon_deg":120.477799,"alt_m":30}}]}`
 
 ### Examples
 
@@ -229,10 +231,8 @@ pub fn extract_json_tool_payload(raw_text: &str) -> String {
     s.to_string()
 }
 
-/// Parse LLM JSON: `{"tasks":[...]}` or legacy single `ToolCall` (including `category: none`).
-pub fn parse_tool_sequence(raw_text: &str) -> Result<LlmToolPayload, serde_json::Error> {
-    let cleaned = extract_json_tool_payload(raw_text);
-    let v: serde_json::Value = serde_json::from_str(&cleaned)?;
+fn parse_tool_sequence_inner(cleaned: &str) -> Result<LlmToolPayload, serde_json::Error> {
+    let v: serde_json::Value = serde_json::from_str(cleaned)?;
 
     if v.get("tasks").is_some() {
         let envelope: TasksEnvelope = serde_json::from_value(v)?;
@@ -240,7 +240,11 @@ pub fn parse_tool_sequence(raw_text: &str) -> Result<LlmToolPayload, serde_json:
             return Ok(LlmToolPayload::NoneReason("ambiguous_request".into()));
         }
         let original_len = envelope.tasks.len();
-        let out: Vec<ToolCall> = envelope.tasks.into_iter().take(MAX_LLM_TASKS).collect();
+        let out: Vec<ToolCall> = envelope
+            .tasks
+            .into_iter()
+            .take(MAX_LLM_TASKS)
+            .collect();
         if original_len > MAX_LLM_TASKS {
             warn!(
                 action = "llm_tasks_truncated",
@@ -249,7 +253,6 @@ pub fn parse_tool_sequence(raw_text: &str) -> Result<LlmToolPayload, serde_json:
                 reason = "LLM returned more than MAX_LLM_TASKS; extra steps dropped"
             );
         }
-        // First `none` inside tasks → treat whole message as that none reason (invalid mix).
         for t in &out {
             if t.category == "none" {
                 return Ok(LlmToolPayload::NoneReason(normalize_none_reason(&t.name)));
@@ -271,6 +274,33 @@ pub fn parse_tool_sequence(raw_text: &str) -> Result<LlmToolPayload, serde_json:
         Ok(LlmToolPayload::NoneReason("ambiguous_request".into()))
     } else {
         Ok(LlmToolPayload::Tasks(vec![single]))
+    }
+}
+
+/// Parse LLM JSON strictly: `{"tasks":[...]}` or legacy single `ToolCall` (including `category: none`).
+/// Only strips optional Markdown fences; invalid JSON is an error.
+pub fn parse_tool_sequence(raw_text: &str) -> Result<LlmToolPayload, serde_json::Error> {
+    let cleaned = extract_json_tool_payload(raw_text);
+    parse_tool_sequence_inner(&cleaned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_trailing_comma() {
+        let raw = r#"{"tasks":[{"category":"drone","name":"arm"},]}"#;
+        assert!(parse_tool_sequence(raw).is_err());
+    }
+
+    #[test]
+    fn parses_valid_tasks() {
+        let raw = r#"{"tasks":[{"category":"drone","name":"arm"}]}"#;
+        match parse_tool_sequence(raw).unwrap() {
+            LlmToolPayload::Tasks(t) => assert_eq!(t.len(), 1),
+            _ => panic!("expected tasks"),
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::config;
 use crate::llm::{
-    extract_json_tool_payload, normalize_none_reason, parse_tool_sequence, ChatMessage, ChatRequest,
-    ChatResponse, LlmToolPayload, SAR_SYSTEM_PROMPT,
+    extract_json_tool_payload, normalize_none_reason, parse_tool_sequence, ChatMessage,
+    ChatRequest, ChatResponse, LlmToolPayload, SAR_SYSTEM_PROMPT,
 };
 use crate::types::{CommandOutcome, GatewayCommand, GatewayState, ToolCall};
 use reqwest::Client;
@@ -416,20 +416,29 @@ impl Orchestrator {
                                             }
                                         }
                                         Err(e) => {
-                                            trace.push(format!("stage=tool_json_parse_failed err={e}"));
+                                            let preview: String =
+                                                content.chars().take(240).collect();
+                                            trace.push(format!(
+                                                "stage=tool_json_parse_failed err={e}"
+                                            ));
+                                            trace.push(format!(
+                                                "stage=llm_content_preview={preview:?}"
+                                            ));
+                                            llm_tool_json = Some(content.clone());
                                             warn!(
                                                 action = "tool_parse_failed",
                                                 request_id = %request_id,
-                                                state = ?self.current_state,
                                                 llm_latency_ms,
                                                 http_status = %status,
                                                 error = %e,
-                                                reason = "failed to parse ToolCall JSON; falling back to vision model"
+                                                reason = "failed to parse ToolCall JSON"
                                             );
-                                            self.current_model = Some("vision".to_string());
-                                            new_state = GatewayState::ACTIVE;
-                                            action_taken =
-                                                "tool_parse_failed_fallback_vision".to_string();
+                                            category = Some("none".to_string());
+                                            tool_name = Some("tool_parse_failed".into());
+                                            action_taken = format!("tool_parse_failed: {e}");
+                                            new_state = GatewayState::IDLE;
+                                            self.last_command_category = None;
+                                            self.last_command_name = None;
                                         }
                                     }
                                 }
