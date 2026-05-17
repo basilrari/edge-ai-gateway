@@ -2,6 +2,7 @@
 //! Main entrypoint: startup telemetry and persistent Axum server.
 
 mod config;
+mod drone_params;
 mod types;
 mod llm;
 mod orchestrator;

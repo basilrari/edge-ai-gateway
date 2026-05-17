@@ -1,6 +1,7 @@
 use crate::config;
+use crate::drone_params::{normalize_drone_tasks, normalize_drone_tool_params, tasks_display_json};
 use crate::llm::{
-    extract_json_tool_payload, normalize_none_reason, parse_tool_sequence, ChatMessage,
+    normalize_none_reason, parse_tool_sequence, ChatMessage,
     ChatRequest, ChatResponse, LlmToolPayload, SAR_SYSTEM_PROMPT,
 };
 use crate::types::{CommandOutcome, GatewayCommand, GatewayState, ToolCall};
@@ -334,8 +335,6 @@ impl Orchestrator {
                                         content.len()
                                     ));
 
-                                    llm_tool_json = Some(extract_json_tool_payload(&content));
-
                                     match parse_tool_sequence(&content) {
                                         Ok(LlmToolPayload::NoneReason(reason)) => {
                                             let reason = normalize_none_reason(&reason);
@@ -370,9 +369,16 @@ impl Orchestrator {
                                                 self.last_command_name = None;
                                                 trace.push("stage=tool_empty_tasks".into());
                                             } else {
+                                                let mut tasks = tasks;
+                                                normalize_drone_tasks(&mut tasks);
+                                                trace.push(
+                                                    "stage=drone_params_normalized".into(),
+                                                );
                                                 let first = &tasks[0];
                                                 tool_params = first.params.clone();
                                                 tools_proposal = Some(tasks.clone());
+                                                llm_tool_json =
+                                                    Some(tasks_display_json(&tasks));
                                                 trace.push(format!(
                                                     "stage=infer_auto_apply steps={}",
                                                     tasks.len()
@@ -785,7 +791,8 @@ async fn drone_apply_via_http(
     let url = config::drone_apply_tool_url();
     trace.push(format!("stage=drone_http_begin tool={name} url={url}"));
     let t0 = Instant::now();
-    let params_json = match apply_params.as_ref() {
+    let normalized = normalize_drone_tool_params(name, apply_params.clone());
+    let params_json = match normalized.as_ref() {
         None | Some(serde_json::Value::Null) => serde_json::json!({}),
         Some(v) if v.is_object() => v.clone(),
         Some(_) => serde_json::json!({}),
