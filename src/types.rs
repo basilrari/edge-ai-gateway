@@ -80,7 +80,7 @@ pub struct ApiResponse {
     /// Ordered tasks from the LLM (executed immediately after infer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolCall>>,
-    /// Parsed tool JSON from the LLM assistant message (tasks array or legacy single object).
+    /// Parsed tool JSON from the LLM assistant message (`{"tasks":[...]}` only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_tool_json: Option<String>,
 }

@@ -13,22 +13,14 @@ Tools are high‑impact actions (moving drones, changing SAR models). You must b
 You must respond with **exactly one JSON object** and nothing else, in this schema:
 
 ```json
-{"tasks":[{"category":"drone"|"model","name":"<tool_name>","params":{}}]}
+{"tasks":[{"category":"drone"|"model"|"none","name":"<tool_name_or_reason>","params":{}}]}
 ```
 
-- **`tasks`** is a JSON array of steps in order. Each element has **`category`** (`"drone"` or `"model"`), **`name`** (tool name), and optional **`params`** (JSON object; omit or use `{}` when not needed).
-- Use **at most 5** tasks. If the user asks for more, pick the **safest 5** in order or return `"category": "none"` if you cannot do that safely.
-- For a **single** tool, you may use either `{"tasks":[{...}]}` **or** the legacy shape below (the gateway accepts both).
-
-**Legacy single-object form** (still allowed):
-
-```json
-{"category": "drone" | "model" | "none", "name": "<tool_name_or_reason>", "params": { } }
-```
-
-When using **`"category": "none"`**, do **not** use a `tasks` array; use the legacy object only.
-
-The **`params`** field is optional on each task. When present, it must be a JSON object (not a string).
+- **Always** use this shape. **Never** emit a top-level object without a **`tasks`** array (even for one step or for no-op).
+- **`tasks`** is a JSON array of steps in order. Each element has **`category`** (`"drone"`, `"model"`, or `"none"`), **`name`** (tool name or reason), and optional **`params`** (JSON object; omit or use `{}` when not needed).
+- **One action** → `{"tasks":[{ ... one element ... }]}` (do **not** omit the array).
+- Use **at most 5** tasks. If the user asks for more, pick the **safest 5** in order or return a single none task if you cannot do that safely.
+- The **`params`** field is optional on each task. When present, it must be a JSON object (not a string).
 
 ### Tools you can choose
 
@@ -57,35 +49,38 @@ The **`params`** field is optional on each task. When present, it must be a JSON
   - `flood_seg` — highlight flooded areas in the image (segmentation).
   - `flood_class` — classify flood type or severity (classification).
 
-You may **never invent** new tool names. For `mission_set_current`, `goto_location`, and `waypoint_inject`, you **must** include a correct `params` object when that tool is chosen; if you cannot infer safe numeric values from the user message, return `"category": "none"` instead of guessing.
+You may **never invent** new tool names. For `mission_set_current`, `goto_location`, and `waypoint_inject`, you **must** include a correct `params` object when that tool is chosen; if you cannot infer safe numeric values from the user message, return a **none** task instead of guessing.
 
-### When to choose `"none"` (legacy object)
+### When to choose `"none"` (inside `tasks`)
 
-You **must** choose `{"category": "none", "name": "<reason>"}` (no `tasks` array) in all of these cases:
+For **no operational action**, return **exactly one** task with `"category": "none"` and the reason as **`name`**:
 
-1. The message is **greeting, small talk, chit‑chat, or vague** with no concrete drone/model action, e.g. "hi", "hello", "how are you", "thanks", or an unclear "search for people" with no camera context.
-   - Use: `{"category": "none", "name": "ambiguous_request"}`
+`{"tasks":[{"category":"none","name":"<reason>"}]}`
 
-2. The request is **ambiguous** or missing critical details and could map to multiple tools, or it is not clearly operational.
-   - Use: `{"category": "none", "name": "ambiguous_request"}`
+Use in these cases:
 
-3. The user asks general questions, explanations, or analysis that **do not require an immediate drone or model action**.
-   - Use: `{"category": "none", "name": "informational_request"}`
+1. **Greeting, small talk, chit‑chat, or vague** with no concrete drone/model action, e.g. "hi", "hello", "how are you", "thanks".
+   - `{"tasks":[{"category":"none","name":"ambiguous_request"}]}`
 
-4. The request is **unsafe, conflicting, or clearly inappropriate** for the SAR mission.
-   - Use: `{"category": "none", "name": "unsafe_or_invalid"}`
+2. **Ambiguous** request or missing critical details.
+   - `{"tasks":[{"category":"none","name":"ambiguous_request"}]}`
 
-The word **"search" alone is never enough** to trigger a tool.
-For example, a vague **"Search for people"** (no camera, no detection, no flood model) is **ambiguous** → `"none"`.
+3. **Informational** questions (no immediate drone/model action).
+   - `{"tasks":[{"category":"none","name":"informational_request"}]}`
 
-**Exception — perception on video:** If the user asks to **detect**, **find**, **locate**, **spot**, or **look for** **people** / **humans** / **persons** / **survivors** **on the camera / video / feed / live view**, that is **`human_detect`** (same as saying “human detection”). Do **not** require the word **“human”** — **“people”** is enough.
+4. **Unsafe, conflicting, or inappropriate** for the SAR mission.
+   - `{"tasks":[{"category":"none","name":"unsafe_or_invalid"}]}`
+
+The word **"search" alone** (with no target, e.g. just "search" or "search the area") is **not** enough to trigger a tool → `{"tasks":[{"category":"none","name":"ambiguous_request"}]}`.
+
+**People search → `human_detect`:** If the user asks to **search for**, **find**, **detect**, **locate**, **spot**, or **look for** **people** / **humans** / **persons** / **survivors**, that is always **`human_detect`** — including short phrases like **"Search for people"**. You do **not** need the words camera, video, feed, or live view. Do **not** return `"none"` for those requests unless they also clearly ask only for a **drone flight maneuver** with no perception (e.g. "circle search" without wanting detection — use `circle_search` instead).
 
 ### Multi-step `tasks` (drone + model in one prompt)
 
 When the user clearly asks for **more than one action in order** (e.g. fly somewhere **then** run detection), emit **`tasks`** with **one entry per step**, in execution order.
 
-- **Do not** put `"category":"none"` inside `tasks`; use the legacy none object instead for no-op.
 - **Do not** exceed **5** tasks.
+- **Do not** mix `"category":"none"` with drone/model steps in the same array.
 - Example (from ground: launch, goto, detect — **4 tasks**): “Go to 37.12, -122.1 at 30 m above home **and** detect people on the live camera” →
   `{"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff","params":{"altitude_m":30}},{"category":"drone","name":"goto_location","params":{"lat_deg":37.12,"lon_deg":-122.1,"alt_m":30}},{"category":"model","name":"human_detect"}]}`
 - If the user clearly implies the vehicle is **already flying**, you may use **`goto_location`** (and model tools) **without** preceding `arm`/`takeoff`.
@@ -93,7 +88,7 @@ When the user clearly asks for **more than one action in order** (e.g. fly somew
 - Example: “Circle search **and** run human detection” →
   `{"tasks":[{"category":"drone","name":"circle_search"},{"category":"model","name":"human_detect"}]}`
 
-If you cannot order steps safely, return `"category": "none"` with `"ambiguous_request"`.
+If you cannot order steps safely, return `{"tasks":[{"category":"none","name":"ambiguous_request"}]}`.
 
 ### When to choose a **drone** tool (single or inside `tasks`)
 
@@ -121,15 +116,16 @@ The user message must clearly imply that the **airframe should move or change fl
 
 Choose `"category": "model"` only when the user clearly asks for one of: **people/person detection** (`human_detect`), **flood segmentation**, or **flood classification** on the SAR camera data.
 
-- **human_detect** — use when the user wants **people detection**, **human detection**, **find/detect/locate people**, **find humans**, **spot survivors**, **look for persons on camera**, etc.
+- **human_detect** — use when the user wants **people detection**, **human detection**, **search for people**, **find/detect/locate people**, **find humans**, **spot survivors**, **look for persons** (with or without "camera" / "video" / "feed" wording).
+- "Search for people" → `{"tasks":[{"category":"model","name":"human_detect"}]}`
 - "Flood segmentation" / "show flooded areas" → `{"tasks":[{"category":"model","name":"flood_seg"}]}`
 - "Flood classification" / "classify the flood" → `{"tasks":[{"category":"model","name":"flood_class"}]}`
 
 ### Output format
 
-- Output **only** one **strict JSON** object (double-quoted keys/strings, no trailing commas, no comments, no `lat`/`long` shorthand in params — use **`lat_deg`**, **`lon_deg`**, **`alt_m`**).
+- Output **only** one **strict JSON** object with a top-level **`tasks`** array (double-quoted keys/strings, no trailing commas, no comments, no `lat`/`long` shorthand in params — use **`lat_deg`**, **`lon_deg`**, **`alt_m`**).
 - Do **not** wrap in Markdown unless unavoidable; the gateway strips fences but invalid JSON fails.
-- Prefer **`{"tasks":[...]}`** for any response that applies tools (including a single step).
+- **Every** response uses `{"tasks":[...]}` — one element for a single tool or none-reason, multiple elements for sequences.
 - Example: user says go to 23.563206, 120.477799 at 30 m →
   `{"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff","params":{"altitude_m":30}},{"category":"drone","name":"goto_location","params":{"lat_deg":23.563206,"lon_deg":120.477799,"alt_m":30}}]}`
 
@@ -140,7 +136,7 @@ Choose `"category": "model"` only when the user clearly asks for one of: **peopl
 User: `hi`
 Assistant:
 ```json
-{"category": "none", "name": "ambiguous_request"}
+{"tasks":[{"category":"none","name":"ambiguous_request"}]}
 ```
 
 2. Clear perception request (people wording):
@@ -151,12 +147,12 @@ Assistant:
 {"tasks":[{"category":"model","name":"human_detect"}]}
 ```
 
-3. Ambiguous search (no camera / no tool):
+3. Search for people (perception — no camera wording required):
 
 User: `Search for people`
 Assistant:
 ```json
-{"category": "none", "name": "ambiguous_request"}
+{"tasks":[{"category":"model","name":"human_detect"}]}
 ```
 
 4. Clear drone maneuver:
@@ -188,13 +184,13 @@ Assistant:
 User: `What models are available on this system?`
 Assistant:
 ```json
-{"category": "none", "name": "informational_request"}
+{"tasks":[{"category":"none","name":"informational_request"}]}
 ```
 "#;
 
 #[derive(Debug, Clone)]
 pub enum LlmToolPayload {
-    /// Legacy `category: none` — no tools to run.
+    /// `tasks` entry with `category: none` — no tools to run.
     NoneReason(String),
     /// One or more drone/model steps in order (already capped).
     Tasks(Vec<ToolCall>),
@@ -267,17 +263,12 @@ fn parse_tool_sequence_inner(cleaned: &str) -> Result<LlmToolPayload, serde_json
         return Ok(LlmToolPayload::Tasks(out));
     }
 
-    let single: ToolCall = serde_json::from_value(v)?;
-    if single.category == "none" {
-        Ok(LlmToolPayload::NoneReason(normalize_none_reason(&single.name)))
-    } else if single.category != "drone" && single.category != "model" {
-        Ok(LlmToolPayload::NoneReason("ambiguous_request".into()))
-    } else {
-        Ok(LlmToolPayload::Tasks(vec![single]))
-    }
+    Err(serde::de::Error::custom(
+        "expected top-level {\"tasks\":[...]}; legacy single-object form is not accepted",
+    ))
 }
 
-/// Parse LLM JSON strictly: `{"tasks":[...]}` or legacy single `ToolCall` (including `category: none`).
+/// Parse LLM JSON strictly: only `{"tasks":[...]}` (one or more steps, or a single none task).
 /// Only strips optional Markdown fences; invalid JSON is an error.
 pub fn parse_tool_sequence(raw_text: &str) -> Result<LlmToolPayload, serde_json::Error> {
     let cleaned = extract_json_tool_payload(raw_text);
@@ -301,6 +292,21 @@ mod tests {
             LlmToolPayload::Tasks(t) => assert_eq!(t.len(), 1),
             _ => panic!("expected tasks"),
         }
+    }
+
+    #[test]
+    fn parses_none_in_tasks() {
+        let raw = r#"{"tasks":[{"category":"none","name":"ambiguous_request"}]}"#;
+        match parse_tool_sequence(raw).unwrap() {
+            LlmToolPayload::NoneReason(r) => assert_eq!(r, "ambiguous_request"),
+            _ => panic!("expected none reason"),
+        }
+    }
+
+    #[test]
+    fn rejects_legacy_single_object() {
+        let raw = r#"{"category":"none","name":"ambiguous_request"}"#;
+        assert!(parse_tool_sequence(raw).is_err());
     }
 }
 
