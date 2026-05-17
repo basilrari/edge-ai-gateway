@@ -77,9 +77,12 @@ pub struct ApiResponse {
     /// When `pending_approval` is true, optional structured args for the next `ApplyTool` (from LLM).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_params: Option<serde_json::Value>,
-    /// When `pending_approval` is true and the LLM proposed more than one step, full ordered tasks for `ApplyToolSequence`.
+    /// Ordered tasks from the LLM (executed immediately after infer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolCall>>,
+    /// Parsed tool JSON from the LLM assistant message (tasks array or legacy single object).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_tool_json: Option<String>,
 }
 
 /// Result of [`crate::orchestrator::Orchestrator::process_command`].
@@ -99,4 +102,5 @@ pub struct CommandOutcome {
     pub trace: Vec<String>,
     pub tool_params: Option<serde_json::Value>,
     pub tools: Option<Vec<ToolCall>>,
+    pub llm_tool_json: Option<String>,
 }

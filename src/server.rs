@@ -86,6 +86,7 @@ async fn infer_handler(
                 drone_error: None,
                 tool_params: None,
                 tools: None,
+                llm_tool_json: None,
             });
         }
     };
@@ -121,6 +122,7 @@ async fn infer_handler(
         drone_error: outcome.drone_error,
         tool_params: outcome.tool_params,
         tools: outcome.tools,
+        llm_tool_json: outcome.llm_tool_json,
     };
 
     Json(api)

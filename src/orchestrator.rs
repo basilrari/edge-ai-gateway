@@ -1,6 +1,7 @@
 use crate::config;
 use crate::llm::{
-    parse_tool_sequence, ChatMessage, ChatRequest, ChatResponse, LlmToolPayload, SAR_SYSTEM_PROMPT,
+    extract_json_tool_payload, normalize_none_reason, parse_tool_sequence, ChatMessage, ChatRequest,
+    ChatResponse, LlmToolPayload, SAR_SYSTEM_PROMPT,
 };
 use crate::types::{CommandOutcome, GatewayCommand, GatewayState, ToolCall};
 use reqwest::Client;
@@ -85,6 +86,143 @@ impl Orchestrator {
         (new_model, action_taken, category, tool_name)
     }
 
+    /// Run an ordered list of LLM tasks immediately (drone HTTP + model placeholder).
+    async fn apply_tasks(
+        &mut self,
+        tools: &[ToolCall],
+        client: &Client,
+        request_id: &str,
+        override_active: bool,
+        trace: &mut Vec<String>,
+    ) -> (
+        String,
+        Option<String>,
+        Option<String>,
+        GatewayState,
+        Option<u16>,
+        Option<u64>,
+        Option<String>,
+    ) {
+        if tools.is_empty() {
+            trace.push("stage=apply_tasks_empty".into());
+            return (
+                "apply_sequence_empty".to_string(),
+                None,
+                None,
+                GatewayState::IDLE,
+                None,
+                None,
+                None,
+            );
+        }
+
+        let new_state = GatewayState::ACTIVE;
+        let mut last_success: Option<ToolCall> = None;
+        let mut stopped_at: Option<usize> = None;
+        let mut drone_http_status: Option<u16> = None;
+        let mut drone_http_ms: Option<u64> = None;
+        let mut drone_error: Option<String> = None;
+
+        for (idx, tool) in tools.iter().enumerate() {
+            if tool.category == "drone" {
+                let r = drone_apply_via_http(
+                    client,
+                    request_id,
+                    &tool.name,
+                    &tool.params,
+                    trace,
+                )
+                .await;
+                drone_http_status = Some(r.http_status);
+                drone_http_ms = Some(r.elapsed_ms);
+                if r.mavlink_ok {
+                    last_success = Some(tool.clone());
+                    trace.push(format!("stage=sequence_step_ok idx={} tool={}", idx, tool.name));
+                } else {
+                    let err = r
+                        .error_detail
+                        .unwrap_or_else(|| "drone step failed without error detail".to_string());
+                    drone_error = Some(err);
+                    stopped_at = Some(idx);
+                    trace.push(format!("stage=sequence_stopped idx={idx}"));
+                    break;
+                }
+            } else if tool.category == "model" {
+                let (maybe_model, act, _c, _n) = self.handle_tool_call(tool.clone(), override_active);
+                if let Some(m) = maybe_model {
+                    self.current_model = Some(m);
+                }
+                trace.push(format!(
+                    "stage=sequence_model_step idx={} action={}",
+                    idx, act
+                ));
+                info!(
+                    action = "apply_sequence_model_step",
+                    request_id = %request_id,
+                    step = idx,
+                    tool_name = %tool.name,
+                    reason = "model path (python-worker) not wired yet"
+                );
+                last_success = Some(tool.clone());
+            } else {
+                trace.push(format!(
+                    "stage=sequence_skip_unknown_category idx={} cat={}",
+                    idx, tool.category
+                ));
+            }
+        }
+
+        if let Some(ref ok_tool) = last_success {
+            self.last_command_category = Some(ok_tool.category.clone());
+            self.last_command_name = Some(ok_tool.name.clone());
+        }
+
+        let category = last_success.as_ref().map(|t| t.category.clone());
+        let tool_name = last_success.as_ref().map(|t| t.name.clone());
+
+        let action_taken = if let Some(idx) = stopped_at {
+            format!(
+                "sequence_stopped_at_step_{idx}_tool_{}",
+                tools[idx].name
+            )
+        } else if tools.len() == 1 {
+            let t = &tools[0];
+            if t.category == "drone" {
+                format!("drone_http_ok:{}", t.name)
+            } else {
+                format!("model_tool_applied:{}", t.name)
+            }
+        } else {
+            format!("sequence_ok:{}_steps", tools.len())
+        };
+
+        if stopped_at.is_some() {
+            info!(
+                action = "apply_tasks_partial",
+                request_id = %request_id,
+                stopped_at = ?stopped_at,
+                reason = "sequence stopped on first drone step failure"
+            );
+        } else {
+            info!(
+                action = "apply_tasks_complete",
+                request_id = %request_id,
+                steps = tools.len(),
+                reason = "all tasks applied after infer"
+            );
+        }
+
+        (
+            action_taken,
+            category,
+            tool_name,
+            new_state,
+            drone_http_status,
+            drone_http_ms,
+            drone_error,
+        )
+    }
+
     #[allow(unused_assignments)]
     pub async fn process_command(
         &mut self,
@@ -107,6 +245,7 @@ impl Orchestrator {
         let mut drone_error: Option<String> = None;
         let mut tool_params: Option<serde_json::Value> = None;
         let mut tools_proposal: Option<Vec<ToolCall>> = None;
+        let mut llm_tool_json: Option<String> = None;
 
         match cmd {
             GatewayCommand::Infer { prompt } => {
@@ -195,8 +334,11 @@ impl Orchestrator {
                                         content.len()
                                     ));
 
+                                    llm_tool_json = Some(extract_json_tool_payload(&content));
+
                                     match parse_tool_sequence(&content) {
                                         Ok(LlmToolPayload::NoneReason(reason)) => {
+                                            let reason = normalize_none_reason(&reason);
                                             tool_params = None;
                                             tools_proposal = None;
                                             action_taken = reason.clone();
@@ -227,62 +369,49 @@ impl Orchestrator {
                                                 self.last_command_category = None;
                                                 self.last_command_name = None;
                                                 trace.push("stage=tool_empty_tasks".into());
-                                            } else if tasks.len() > 1 {
+                                            } else {
                                                 let first = &tasks[0];
                                                 tool_params = first.params.clone();
                                                 tools_proposal = Some(tasks.clone());
-                                                category = Some(first.category.clone());
-                                                tool_name = Some(first.name.clone());
-                                                let summary = tasks
-                                                    .iter()
-                                                    .map(|t| format!("{}:{}", t.category, t.name))
-                                                    .collect::<Vec<_>>()
-                                                    .join(" -> ");
-                                                action_taken = format!(
-                                                    "Sequence proposal ({} steps): {}",
-                                                    tasks.len(),
-                                                    summary
-                                                );
-                                                pending_approval = true;
                                                 trace.push(format!(
-                                                    "stage=tool_proposal_sequence steps={} first={:?}",
-                                                    tasks.len(),
-                                                    tool_name
+                                                    "stage=infer_auto_apply steps={}",
+                                                    tasks.len()
                                                 ));
+                                                let (
+                                                    act,
+                                                    cat,
+                                                    tname,
+                                                    st,
+                                                    d_status,
+                                                    d_ms,
+                                                    d_err,
+                                                ) = self
+                                                    .apply_tasks(
+                                                        &tasks,
+                                                        client,
+                                                        request_id,
+                                                        override_active,
+                                                        &mut trace,
+                                                    )
+                                                    .await;
+                                                action_taken = act;
+                                                category = cat;
+                                                tool_name = tname;
+                                                new_state = st;
+                                                drone_http_status = d_status;
+                                                drone_http_ms = d_ms;
+                                                drone_error = d_err;
+                                                pending_approval = false;
 
                                                 info!(
-                                                    action = "tool_proposal_sequence",
+                                                    action = "infer_auto_apply",
                                                     request_id = %request_id,
                                                     steps = tasks.len(),
                                                     category = ?category,
                                                     tool_name = ?tool_name,
                                                     llm_latency_ms,
                                                     http_status = %status,
-                                                    reason = "multi-step ToolCall proposal for approval"
-                                                );
-                                            } else {
-                                                let tool = tasks.into_iter().next().expect("len 1");
-                                                tool_params = tool.params.clone();
-                                                tools_proposal = None;
-                                                let (_, act, cat, tool_n) =
-                                                    self.handle_tool_call(tool, override_active);
-                                                action_taken = act;
-                                                category = cat.clone();
-                                                tool_name = tool_n.clone();
-                                                pending_approval = true;
-                                                trace.push(format!(
-                                                    "stage=tool_proposal category={:?} tool={:?}",
-                                                    category, tool_name
-                                                ));
-
-                                                info!(
-                                                    action = "tool_proposal",
-                                                    request_id = %request_id,
-                                                    category = ?category,
-                                                    tool_name = ?tool_name,
-                                                    llm_latency_ms,
-                                                    http_status = %status,
-                                                    reason = "ToolCall proposal returned to frontend for approval"
+                                                    reason = "LLM tasks applied immediately after infer"
                                                 );
                                             }
                                         }
@@ -625,6 +754,7 @@ impl Orchestrator {
             trace,
             tool_params,
             tools: tools_proposal,
+            llm_tool_json,
         }
     }
 }

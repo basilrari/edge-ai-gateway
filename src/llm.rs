@@ -63,10 +63,10 @@ You may **never invent** new tool names. For `mission_set_current`, `goto_locati
 
 You **must** choose `{"category": "none", "name": "<reason>"}` (no `tasks` array) in all of these cases:
 
-1. The message is **greeting, small talk, or chit‑chat**, e.g. "hi", "hello", "how are you", "thanks".
-   - Use: `{"category": "none", "name": "greeting_only"}`
+1. The message is **greeting, small talk, chit‑chat, or vague** with no concrete drone/model action, e.g. "hi", "hello", "how are you", "thanks", or an unclear "search for people" with no camera context.
+   - Use: `{"category": "none", "name": "ambiguous_request"}`
 
-2. The request is **ambiguous** or missing critical details and could map to multiple tools, or it is not clearly operational (no concrete drone maneuver or model action).
+2. The request is **ambiguous** or missing critical details and could map to multiple tools, or it is not clearly operational.
    - Use: `{"category": "none", "name": "ambiguous_request"}`
 
 3. The user asks general questions, explanations, or analysis that **do not require an immediate drone or model action**.
@@ -133,12 +133,12 @@ Choose `"category": "model"` only when the user clearly asks for one of: **peopl
 
 ### Examples
 
-1. Greeting:
+1. Greeting / small talk:
 
 User: `hi`
 Assistant:
 ```json
-{"category": "none", "name": "greeting_only"}
+{"category": "none", "name": "ambiguous_request"}
 ```
 
 2. Clear perception request (people wording):
@@ -203,6 +203,15 @@ struct TasksEnvelope {
     tasks: Vec<ToolCall>,
 }
 
+/// Map legacy none reasons to the current contract (`greeting_only` → `ambiguous_request`).
+pub fn normalize_none_reason(reason: &str) -> String {
+    if reason == "greeting_only" {
+        "ambiguous_request".to_string()
+    } else {
+        reason.to_string()
+    }
+}
+
 /// Strip optional Markdown fences so models that wrap JSON in ` ```json ` blocks still parse.
 pub fn extract_json_tool_payload(raw_text: &str) -> String {
     let s = raw_text.trim();
@@ -243,7 +252,7 @@ pub fn parse_tool_sequence(raw_text: &str) -> Result<LlmToolPayload, serde_json:
         // First `none` inside tasks → treat whole message as that none reason (invalid mix).
         for t in &out {
             if t.category == "none" {
-                return Ok(LlmToolPayload::NoneReason(t.name.clone()));
+                return Ok(LlmToolPayload::NoneReason(normalize_none_reason(&t.name)));
             }
             if t.category != "drone" && t.category != "model" {
                 return Ok(LlmToolPayload::NoneReason("ambiguous_request".into()));
@@ -257,7 +266,7 @@ pub fn parse_tool_sequence(raw_text: &str) -> Result<LlmToolPayload, serde_json:
 
     let single: ToolCall = serde_json::from_value(v)?;
     if single.category == "none" {
-        Ok(LlmToolPayload::NoneReason(single.name))
+        Ok(LlmToolPayload::NoneReason(normalize_none_reason(&single.name)))
     } else if single.category != "drone" && single.category != "model" {
         Ok(LlmToolPayload::NoneReason("ambiguous_request".into()))
     } else {
