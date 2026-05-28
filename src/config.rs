@@ -56,3 +56,13 @@ pub fn drone_logs_url() -> String {
     let base = drone_server_base_url().trim_end_matches('/').to_string();
     format!("{base}/v1/logs")
 }
+
+/// WebSocket telemetry stream on drone-http (gateway relays at `/drone/ws`).
+pub fn drone_telemetry_ws_url() -> String {
+    let base = drone_server_base_url();
+    let base = base.trim_end_matches('/');
+    let ws_base = base
+        .replacen("https://", "wss://", 1)
+        .replacen("http://", "ws://", 1);
+    format!("{ws_base}/v1/ws/telemetry")
+}

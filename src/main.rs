@@ -3,10 +3,14 @@
 
 mod config;
 mod drone_params;
-mod types;
+mod drone_ws;
 mod llm;
+mod llm_decision;
+mod types;
 mod orchestrator;
 mod server;
+#[cfg(feature = "eval")]
+mod eval;
 
 use clap::Parser;
 use reqwest::Client;

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
+    extract::ws::WebSocketUpgrade,
     extract::State,
     http::{HeaderMap, Method, StatusCode},
     routing::{get, post},
@@ -37,7 +38,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/drone/position", get(drone_position_handler))
         .route("/drone/telemetry", get(drone_telemetry_handler))
         .route("/drone/mission", get(drone_mission_handler))
-        .route("/drone/logs", get(drone_logs_handler));
+        .route("/drone/logs", get(drone_logs_handler))
+        .route("/drone/ws", get(drone_ws_handler));
 
     #[cfg(feature = "eval")]
     let app = app.merge(crate::eval::eval_router());
@@ -160,6 +162,11 @@ async fn status_handler(
         "request_id": request_id,
         "debug_trace": outcome.trace,
     }))
+}
+
+async fn drone_ws_handler(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {
+    let drone_url = config::drone_telemetry_ws_url();
+    ws.on_upgrade(move |socket| crate::drone_ws::relay_telemetry_ws(socket, drone_url))
 }
 
 async fn proxy_drone_get(
