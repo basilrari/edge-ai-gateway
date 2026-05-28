@@ -25,3 +25,5 @@ Thumbs.db
 
 # Benchmark output (keep scripts; ignore large runs)
 benchmark/results/
+benchmark/__pycache__/
+**/__pycache__/
