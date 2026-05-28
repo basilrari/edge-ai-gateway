@@ -1,9 +1,7 @@
 use crate::config;
 use crate::drone_params::{normalize_drone_tasks, normalize_drone_tool_params, tasks_display_json};
-use crate::llm::{
-    normalize_none_reason, parse_tool_sequence, ChatMessage,
-    ChatRequest, ChatResponse, LlmToolPayload, SAR_SYSTEM_PROMPT,
-};
+use crate::llm::{normalize_none_reason, LlmToolPayload};
+use crate::llm_decision::run_llm_tool_decision;
 use crate::types::{CommandOutcome, GatewayCommand, GatewayState, ToolCall};
 use reqwest::Client;
 use std::time::{Duration, Instant};
@@ -279,204 +277,144 @@ impl Orchestrator {
                     action_taken = "override_active_skip_llm".to_string();
                     tool_params = None;
                 } else {
-                    let llm_url = config::llm_chat_completions_url();
-                    trace.push(format!("stage=llm_http_post url={llm_url}"));
+                    let dec = run_llm_tool_decision(client, &prompt, request_id, &mut trace).await;
+                    llm_latency_ms = dec.llm_latency_ms;
+                    llm_response = dec.llm_envelope_raw.clone();
 
-                    let request = ChatRequest {
-                        model: "qwen".to_string(),
-                        messages: vec![
-                            ChatMessage {
-                                role: "system".to_string(),
-                                content: SAR_SYSTEM_PROMPT.to_string(),
-                            },
-                            ChatMessage {
-                                role: "user".to_string(),
-                                content: prompt.clone(),
-                            },
-                        ],
-                        temperature: 0.0,
-                    };
+                    if dec.transport_error.is_some() {
+                        let e = dec.transport_error.as_deref().unwrap_or("");
+                        warn!(
+                            action = "llm_http_failed",
+                            request_id = %request_id,
+                            state = ?self.current_state,
+                            llm_latency_ms,
+                            error = %e,
+                            reason = "HTTP request to LLM failed; falling back to text model"
+                        );
+                        self.current_model = Some("text".to_string());
+                        new_state = GatewayState::ACTIVE;
+                        action_taken = "llm_http_failed_fallback_text".to_string();
+                    } else if dec.chat_parse_error.is_some() {
+                        let e = dec.chat_parse_error.as_deref().unwrap_or("");
+                        warn!(
+                            action = "llm_parse_failed",
+                            request_id = %request_id,
+                            state = ?self.current_state,
+                            llm_latency_ms,
+                            error = %e,
+                            reason = "failed to parse LLM envelope; falling back to text model"
+                        );
+                        self.current_model = Some("text".to_string());
+                        new_state = GatewayState::ACTIVE;
+                        action_taken = "llm_parse_failed_fallback_text".to_string();
+                    } else if let Some(tool_res) = dec.tool_payload {
+                        let status = dec.http_status.unwrap_or(0);
+                        match tool_res {
+                            Ok(LlmToolPayload::NoneReason(reason)) => {
+                                let reason = normalize_none_reason(&reason);
+                                tool_params = None;
+                                tools_proposal = None;
+                                action_taken = reason.clone();
+                                category = Some("none".to_string());
+                                tool_name = Some(reason);
+                                new_state = GatewayState::IDLE;
+                                self.last_command_category = None;
+                                self.last_command_name = None;
+                                trace.push("stage=tool_none".into());
 
-                    let llm_start = Instant::now();
-
-                    let http_result = client
-                        .post(&llm_url)
-                        .header("x-request-id", request_id)
-                        .json(&request)
-                        .timeout(Duration::from_secs(120))
-                        .send()
-                        .await;
-
-                    llm_latency_ms = llm_start.elapsed().as_millis() as u64;
-                    trace.push(format!("stage=llm_http_done ms={llm_latency_ms}"));
-
-                    match http_result {
-                        Ok(resp) => {
-                            let status = resp.status();
-                            trace.push(format!(
-                                "stage=llm_http_response http_status={}",
-                                status.as_u16()
-                            ));
-                            let text = resp.text().await.unwrap_or_default();
-                            llm_response = text.clone();
-
-                            let parsed_chat: Result<ChatResponse, _> =
-                                serde_json::from_str(&text);
-                            match parsed_chat {
-                                Ok(chat) => {
-                                    let content = chat
-                                        .choices
-                                        .get(0)
-                                        .map(|c| c.message.content.clone())
-                                        .unwrap_or_default();
-
+                                info!(
+                                    action = "tool_none",
+                                    request_id = %request_id,
+                                    state = ?new_state,
+                                    llm_latency_ms,
+                                    http_status = %status,
+                                    reason = "LLM returned category none; no tool activated"
+                                );
+                            }
+                            Ok(LlmToolPayload::Tasks(tasks)) => {
+                                if tasks.is_empty() {
+                                    tool_params = None;
+                                    tools_proposal = None;
+                                    action_taken = "ambiguous_request".to_string();
+                                    category = Some("none".to_string());
+                                    tool_name = Some("ambiguous_request".into());
+                                    new_state = GatewayState::IDLE;
+                                    self.last_command_category = None;
+                                    self.last_command_name = None;
+                                    trace.push("stage=tool_empty_tasks".into());
+                                } else {
+                                    let mut tasks = tasks;
+                                    normalize_drone_tasks(&mut tasks);
+                                    trace.push("stage=drone_params_normalized".into());
+                                    let first = &tasks[0];
+                                    tool_params = first.params.clone();
+                                    tools_proposal = Some(tasks.clone());
+                                    llm_tool_json = Some(tasks_display_json(&tasks));
                                     trace.push(format!(
-                                        "stage=llm_content_len chars={}",
-                                        content.len()
+                                        "stage=infer_auto_apply steps={}",
+                                        tasks.len()
                                     ));
+                                    let (
+                                        act,
+                                        cat,
+                                        tname,
+                                        st,
+                                        d_status,
+                                        d_ms,
+                                        d_err,
+                                    ) = self
+                                        .apply_tasks(
+                                            &tasks,
+                                            client,
+                                            request_id,
+                                            override_active,
+                                            &mut trace,
+                                        )
+                                        .await;
+                                    action_taken = act;
+                                    category = cat;
+                                    tool_name = tname;
+                                    new_state = st;
+                                    drone_http_status = d_status;
+                                    drone_http_ms = d_ms;
+                                    drone_error = d_err;
+                                    pending_approval = false;
 
-                                    match parse_tool_sequence(&content) {
-                                        Ok(LlmToolPayload::NoneReason(reason)) => {
-                                            let reason = normalize_none_reason(&reason);
-                                            tool_params = None;
-                                            tools_proposal = None;
-                                            action_taken = reason.clone();
-                                            category = Some("none".to_string());
-                                            tool_name = Some(reason);
-                                            new_state = GatewayState::IDLE;
-                                            self.last_command_category = None;
-                                            self.last_command_name = None;
-                                            trace.push("stage=tool_none".into());
-
-                                            info!(
-                                                action = "tool_none",
-                                                request_id = %request_id,
-                                                state = ?new_state,
-                                                llm_latency_ms,
-                                                http_status = %status,
-                                                reason = "LLM returned category none; no tool activated"
-                                            );
-                                        }
-                                        Ok(LlmToolPayload::Tasks(tasks)) => {
-                                            if tasks.is_empty() {
-                                                tool_params = None;
-                                                tools_proposal = None;
-                                                action_taken = "ambiguous_request".to_string();
-                                                category = Some("none".to_string());
-                                                tool_name = Some("ambiguous_request".into());
-                                                new_state = GatewayState::IDLE;
-                                                self.last_command_category = None;
-                                                self.last_command_name = None;
-                                                trace.push("stage=tool_empty_tasks".into());
-                                            } else {
-                                                let mut tasks = tasks;
-                                                normalize_drone_tasks(&mut tasks);
-                                                trace.push(
-                                                    "stage=drone_params_normalized".into(),
-                                                );
-                                                let first = &tasks[0];
-                                                tool_params = first.params.clone();
-                                                tools_proposal = Some(tasks.clone());
-                                                llm_tool_json =
-                                                    Some(tasks_display_json(&tasks));
-                                                trace.push(format!(
-                                                    "stage=infer_auto_apply steps={}",
-                                                    tasks.len()
-                                                ));
-                                                let (
-                                                    act,
-                                                    cat,
-                                                    tname,
-                                                    st,
-                                                    d_status,
-                                                    d_ms,
-                                                    d_err,
-                                                ) = self
-                                                    .apply_tasks(
-                                                        &tasks,
-                                                        client,
-                                                        request_id,
-                                                        override_active,
-                                                        &mut trace,
-                                                    )
-                                                    .await;
-                                                action_taken = act;
-                                                category = cat;
-                                                tool_name = tname;
-                                                new_state = st;
-                                                drone_http_status = d_status;
-                                                drone_http_ms = d_ms;
-                                                drone_error = d_err;
-                                                pending_approval = false;
-
-                                                info!(
-                                                    action = "infer_auto_apply",
-                                                    request_id = %request_id,
-                                                    steps = tasks.len(),
-                                                    category = ?category,
-                                                    tool_name = ?tool_name,
-                                                    llm_latency_ms,
-                                                    http_status = %status,
-                                                    reason = "LLM tasks applied immediately after infer"
-                                                );
-                                            }
-                                        }
-                                        Err(e) => {
-                                            let preview: String =
-                                                content.chars().take(240).collect();
-                                            trace.push(format!(
-                                                "stage=tool_json_parse_failed err={e}"
-                                            ));
-                                            trace.push(format!(
-                                                "stage=llm_content_preview={preview:?}"
-                                            ));
-                                            llm_tool_json = Some(content.clone());
-                                            warn!(
-                                                action = "tool_parse_failed",
-                                                request_id = %request_id,
-                                                llm_latency_ms,
-                                                http_status = %status,
-                                                error = %e,
-                                                reason = "failed to parse ToolCall JSON"
-                                            );
-                                            category = Some("none".to_string());
-                                            tool_name = Some("tool_parse_failed".into());
-                                            action_taken = format!("tool_parse_failed: {e}");
-                                            new_state = GatewayState::IDLE;
-                                            self.last_command_category = None;
-                                            self.last_command_name = None;
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    trace.push(format!("stage=llm_envelope_parse_failed err={e}"));
-                                    warn!(
-                                        action = "llm_parse_failed",
+                                    info!(
+                                        action = "infer_auto_apply",
                                         request_id = %request_id,
-                                        state = ?self.current_state,
+                                        steps = tasks.len(),
+                                        category = ?category,
+                                        tool_name = ?tool_name,
                                         llm_latency_ms,
-                                        error = %e,
-                                        reason = "failed to parse LLM envelope; falling back to text model"
+                                        http_status = %status,
+                                        reason = "LLM tasks applied immediately after infer"
                                     );
-                                    self.current_model = Some("text".to_string());
-                                    new_state = GatewayState::ACTIVE;
-                                    action_taken = "llm_parse_failed_fallback_text".to_string();
                                 }
                             }
-                        }
-                        Err(e) => {
-                            trace.push(format!("stage=llm_http_transport_failed err={e}"));
-                            warn!(
-                                action = "llm_http_failed",
-                                request_id = %request_id,
-                                state = ?self.current_state,
-                                llm_latency_ms,
-                                error = %e,
-                                reason = "HTTP request to LLM failed; falling back to text model"
-                            );
-                            self.current_model = Some("text".to_string());
-                            new_state = GatewayState::ACTIVE;
-                            action_taken = "llm_http_failed_fallback_text".to_string();
+                            Err(e) => {
+                                let preview: String =
+                                    dec.assistant_content.chars().take(240).collect();
+                                trace.push(format!("stage=tool_json_parse_failed err={e}"));
+                                trace.push(format!(
+                                    "stage=llm_content_preview={preview:?}"
+                                ));
+                                llm_tool_json = Some(dec.assistant_content.clone());
+                                warn!(
+                                    action = "tool_parse_failed",
+                                    request_id = %request_id,
+                                    llm_latency_ms,
+                                    http_status = %status,
+                                    error = %e,
+                                    reason = "failed to parse ToolCall JSON"
+                                );
+                                category = Some("none".to_string());
+                                tool_name = Some("tool_parse_failed".into());
+                                action_taken = format!("tool_parse_failed: {e}");
+                                new_state = GatewayState::IDLE;
+                                self.last_command_category = None;
+                                self.last_command_name = None;
+                            }
                         }
                     }
                 }

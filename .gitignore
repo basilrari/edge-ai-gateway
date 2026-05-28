@@ -22,3 +22,6 @@ rustfmt.toml
 # OS files
 .DS_Store
 Thumbs.db
+
+# Benchmark output (keep scripts; ignore large runs)
+benchmark/results/
