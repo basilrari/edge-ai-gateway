@@ -38,6 +38,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/drone/position", get(drone_position_handler))
         .route("/drone/telemetry", get(drone_telemetry_handler))
         .route("/drone/mission", get(drone_mission_handler))
+        .route("/drone/mission/upload", post(drone_mission_upload_handler))
         .route("/drone/logs", get(drone_logs_handler))
         .route("/drone/ws", get(drone_ws_handler));
 
@@ -246,6 +247,42 @@ async fn drone_mission_handler(
         "drone_mission_proxy_failed",
     )
     .await
+}
+
+async fn drone_mission_upload_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = pick_request_id(&headers);
+    let url = config::drone_mission_upload_url();
+    let send = state
+        .client
+        .post(&url)
+        .header("x-request-id", &request_id)
+        .json(&body)
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await;
+
+    match send {
+        Ok(resp) => {
+            let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            let text = resp.text().await.unwrap_or_default();
+            let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({
+                "ok": false,
+                "error": "drone_server_non_json_body"
+            }));
+            (status, Json(json))
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": format!("drone_mission_upload_proxy_failed: {e}")
+            })),
+        ),
+    }
 }
 
 async fn drone_logs_handler(

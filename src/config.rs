@@ -52,6 +52,11 @@ pub fn drone_mission_url() -> String {
     format!("{base}/v1/mission")
 }
 
+pub fn drone_mission_upload_url() -> String {
+    let base = drone_server_base_url().trim_end_matches('/').to_string();
+    format!("{base}/v1/mission/upload")
+}
+
 pub fn drone_logs_url() -> String {
     let base = drone_server_base_url().trim_end_matches('/').to_string();
     format!("{base}/v1/logs")
