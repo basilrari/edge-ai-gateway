@@ -41,3 +41,18 @@ pub fn drone_position_url() -> String {
     let base = drone_server_base_url().trim_end_matches('/').to_string();
     format!("{base}/v1/position")
 }
+
+pub fn drone_telemetry_url() -> String {
+    let base = drone_server_base_url().trim_end_matches('/').to_string();
+    format!("{base}/v1/telemetry")
+}
+
+pub fn drone_mission_url() -> String {
+    let base = drone_server_base_url().trim_end_matches('/').to_string();
+    format!("{base}/v1/mission")
+}
+
+pub fn drone_logs_url() -> String {
+    let base = drone_server_base_url().trim_end_matches('/').to_string();
+    format!("{base}/v1/logs")
+}

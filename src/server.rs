@@ -31,16 +31,23 @@ pub fn build_router(state: AppState) -> Router {
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(Any);
 
-    Router::new()
+    let app = Router::new()
         .route("/infer", post(infer_handler))
         .route("/status", get(status_handler))
         .route("/drone/position", get(drone_position_handler))
-        .layer(TraceLayer::new_for_http())
+        .route("/drone/telemetry", get(drone_telemetry_handler))
+        .route("/drone/mission", get(drone_mission_handler))
+        .route("/drone/logs", get(drone_logs_handler));
+
+    #[cfg(feature = "eval")]
+    let app = app.merge(crate::eval::eval_router());
+
+    app.layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)
 }
 
-fn pick_request_id(headers: &HeaderMap) -> String {
+pub(crate) fn pick_request_id(headers: &HeaderMap) -> String {
     headers
         .get("x-request-id")
         .and_then(|h| h.to_str().ok())
@@ -155,19 +162,15 @@ async fn status_handler(
     }))
 }
 
-/// Proxies `GET` drone-http `/v1/position` for the frontend map (CORS stays on the gateway).
-async fn drone_position_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
+async fn proxy_drone_get(
+    state: &AppState,
+    request_id: &str,
+    url: &str,
+    fail_label: &str,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let request_id = pick_request_id(&headers);
-    let url = config::drone_position_url();
-    let span = info_span!("http_drone_position", request_id = %request_id);
-    let _guard = span.enter();
-
     let send = state
         .client
-        .get(&url)
+        .get(url)
         .header("x-request-id", request_id)
         .timeout(Duration::from_secs(5))
         .send()
@@ -189,10 +192,67 @@ async fn drone_position_handler(
             StatusCode::BAD_GATEWAY,
             Json(serde_json::json!({
                 "ok": false,
-                "error": format!("drone_position_proxy_failed: {e}")
+                "error": format!("{fail_label}: {e}")
             })),
         ),
     }
+}
+
+/// Proxies `GET` drone-http `/v1/position` for the frontend map (CORS stays on the gateway).
+async fn drone_position_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = pick_request_id(&headers);
+    proxy_drone_get(
+        &state,
+        &request_id,
+        &config::drone_position_url(),
+        "drone_position_proxy_failed",
+    )
+    .await
+}
+
+async fn drone_telemetry_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = pick_request_id(&headers);
+    proxy_drone_get(
+        &state,
+        &request_id,
+        &config::drone_telemetry_url(),
+        "drone_telemetry_proxy_failed",
+    )
+    .await
+}
+
+async fn drone_mission_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = pick_request_id(&headers);
+    proxy_drone_get(
+        &state,
+        &request_id,
+        &config::drone_mission_url(),
+        "drone_mission_proxy_failed",
+    )
+    .await
+}
+
+async fn drone_logs_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = pick_request_id(&headers);
+    proxy_drone_get(
+        &state,
+        &request_id,
+        &config::drone_logs_url(),
+        "drone_logs_proxy_failed",
+    )
+    .await
 }
 
 pub async fn run_http_server(state: AppState) {
