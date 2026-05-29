@@ -288,7 +288,7 @@ async fn drone_mission_upload_handler(
         .post(&url)
         .header("x-request-id", &request_id)
         .json(&body)
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(45))
         .send()
         .await;
 
