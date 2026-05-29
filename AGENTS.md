@@ -32,7 +32,7 @@ This file defines the **exact API contract** (inputs and outputs) and **how the 
 
 | Field               | Type    | Description |
 |---------------------|--------|-------------|
-| `state`             | string | One of: `"IDLE"`, `"ACTIVE"`, `"OVERRIDE_ACTIVE"`, `"SWITCHING"`. |
+| `state`             | string | One of: `"IDLE"`, `"ACTIVE"`, `"OVERRIDE_ACTIVE"`. |
 | `model`             | string | Current model name (e.g. `"vision"`, `"text"`) or `"none"`. |
 | `override_active`   | bool   | `true` if a time-limited override is active. |
 | `active_command`    | string | **Current active command.** Either `"drone: <tool_name>"`, `"model: <tool_name>"`, or `"none"` if no command has been set (e.g. idle or just started). |
@@ -140,13 +140,13 @@ Optional **`params`** (object) for tools that need structured arguments, e.g. `g
 
 | Field             | Type    | Description |
 |-------------------|--------|-------------|
-| `state`           | string | `"IDLE"` \| `"ACTIVE"` \| `"OVERRIDE_ACTIVE"` \| `"SWITCHING"`. |
+| `state`           | string | `"IDLE"` \| `"ACTIVE"` \| `"OVERRIDE_ACTIVE"`. |
 | `model`           | string \| null | Current model or `null`. |
 | `override_active` | bool   | Whether an override is active. |
 | `category`        | string \| null | First step category when Infer ran: `"drone"` or `"model"` (for display / single-step ApplyTool). |
 | `tool_name`       | string \| null | First step tool name (e.g. `"goto_location"`, `"human_detect"`). |
-| `pending_approval` | bool   | When `true`, this is a **proposal** only; frontend shows Accept/Reject. Apply with **ApplyTool** (one step) or **ApplyToolSequence** (when **`tools`** has 2+ entries). |
-| `tools`           | array \| omitted | When `pending_approval` is true and the LLM proposed **multiple** steps, ordered `{ "category", "name", "params"? }` objects (max 5). Omitted for single-step proposals. |
+| `pending_approval` | bool   | Always **`false`** today — Infer **auto-applies** drone/model tools via `infer_auto_apply`. Field kept for API compatibility. |
+| `tools`           | array \| omitted | When the LLM proposed **multiple** steps, ordered `{ "category", "name", "params"? }` objects (max 5). |
 | `tool_params`     | object \| omitted | Params for the **first** step when needed (e.g. `goto_location`); also sent with **ApplyTool** on Accept. |
 | `llm_response`    | string | Raw LLM response body (or error message). |
 | `action_taken`    | string | Short description of what was done (e.g. `"Drone command: move_forward"`, `"override_set"`). |
@@ -234,7 +234,7 @@ Optional **`params`** (object) for tools that need structured arguments, e.g. `g
 2. **Infer (prompt)**:
    - Gateway sends the prompt (with system prompt in `llm.rs`) to the LLM at `http://localhost:8080/v1/chat/completions`.
    - LLM returns JSON: preferred **`{"tasks":[...]}`** (up to **5** steps, each `category` + `name` + optional `params`), or legacy **`{"category":"drone"|"model"|"none","name":"..."}`**.
-   - If the result is one or more drone/model steps, the gateway returns **`pending_approval: true`**. For **2+** steps it also returns **`tools`**. It does **not** send to drone/model until the user accepts.
+   - If the result is one or more drone/model steps, the gateway **auto-applies** them (`infer_auto_apply`) and returns `pending_approval: false` with `action_taken` describing what ran.
    - If the result is **`none`**, the gateway returns `pending_approval: false` and may set state to IDLE.
 3. **ApplyTool** / **ApplyToolSequence**:
    - After the user accepts: **ApplyTool** for a single-step proposal; **ApplyToolSequence** with the full **`tools`** array for multi-step. Gateway runs drone steps via **Drone Server** HTTP in order; on first drone failure it stops and reports **`drone_error`**. Model steps update internal model / placeholder python path. **`active_command`** reflects the **last successful** step (or remains unchanged if the first step fails).

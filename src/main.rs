@@ -14,7 +14,6 @@ mod server;
 #[cfg(feature = "eval")]
 mod eval;
 
-use clap::Parser;
 use reqwest::Client;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -24,15 +23,6 @@ use crate::infer_log::InferLog;
 use crate::orchestrator::Orchestrator;
 use crate::server::AppState;
 use crate::types::GatewayState;
-
-/// Jetson LLM Gateway — CLI-only entrypoint, now primarily starting HTTP server.
-#[derive(Parser, Debug)]
-#[command(name = "gateway", about = "Jetson LLM Gateway", version)]
-struct Args {
-    /// Reserved for future quick CLI tests (currently unused).
-    #[arg(long)]
-    _input: Option<String>,
-}
 
 /// Best-effort current process RSS in MB (Linux /proc/self/status).
 fn memory_estimate_mb() -> Option<f64> {
@@ -66,8 +56,6 @@ fn rust_version() -> String {
 
 #[tokio::main]
 async fn main() {
-    let _args = Args::parse();
-
     // Tracing: pretty console + structured fields (env RUST_LOG controls level).
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
@@ -88,7 +76,7 @@ async fn main() {
 
     // Startup banner
     eprintln!("╔══════════════════════════════════════════════════════════════╗");
-    eprintln!("║  Jetson LLM Gateway — CLI (Step 6 — Tool Actions + Raw LLM Reply) ║");
+    eprintln!("║  Jetson LLM Gateway — SAR drone HTTP API                     ║");
     eprintln!("╠══════════════════════════════════════════════════════════════╣");
     eprintln!("║  Started: {:<50} ║", truncate(&ts, 50));
     eprintln!("║  Rust:    {:<48} ║", truncate(&rust_ver, 48));
@@ -129,7 +117,6 @@ async fn main() {
         infer_log: InferLog::new(),
     };
 
-    // Step 7 will make real gRPC call to python-worker from the /infer handler.
     crate::server::run_http_server(state).await;
 }
 

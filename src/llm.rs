@@ -320,27 +320,6 @@ mod tests {
     }
 }
 
-/// Backward-compatible: single-tool parse; fails if multiple tasks are present.
-#[allow(dead_code)]
-pub fn parse_tool_call(raw_text: &str) -> Result<ToolCall, serde_json::Error> {
-    match parse_tool_sequence(raw_text)? {
-        LlmToolPayload::NoneReason(name) => Ok(ToolCall {
-            category: "none".into(),
-            name,
-            params: None,
-        }),
-        LlmToolPayload::Tasks(v) => {
-            if v.len() == 1 {
-                Ok(v.into_iter().next().expect("len checked"))
-            } else {
-                Err(serde::de::Error::custom(
-                    "multiple tasks require parse_tool_sequence",
-                ))
-            }
-        }
-    }
-}
-
 #[derive(serde::Serialize)]
 pub struct ChatRequest {
     pub model: String,

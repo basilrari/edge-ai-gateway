@@ -6,8 +6,6 @@ pub enum GatewayState {
     IDLE,
     ACTIVE,
     OVERRIDE_ACTIVE,
-    #[allow(dead_code)]
-    SWITCHING,
 }
 
 impl fmt::Display for GatewayState {
@@ -16,7 +14,6 @@ impl fmt::Display for GatewayState {
             GatewayState::IDLE => write!(f, "IDLE"),
             GatewayState::ACTIVE => write!(f, "ACTIVE"),
             GatewayState::OVERRIDE_ACTIVE => write!(f, "OVERRIDE_ACTIVE"),
-            GatewayState::SWITCHING => write!(f, "SWITCHING"),
         }
     }
 }
