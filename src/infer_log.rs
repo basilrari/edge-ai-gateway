@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_ENTRIES: usize = 100;
+/// Infer log entries older than this are dropped from memory (24 hours).
+const LOG_RETENTION_MS: u64 = 24 * 60 * 60 * 1000;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct LlmLogEntry {
@@ -49,6 +51,7 @@ impl InferLog {
         };
         if let Ok(mut q) = self.0.lock() {
             q.push_back(entry);
+            prune_expired(&mut q);
             while q.len() > MAX_ENTRIES {
                 q.pop_front();
             }
@@ -58,7 +61,25 @@ impl InferLog {
     pub fn snapshot(&self) -> Vec<LlmLogEntry> {
         self.0
             .lock()
-            .map(|q| q.iter().cloned().collect())
+            .map(|mut q| {
+                prune_expired(&mut q);
+                q.iter().cloned().collect()
+            })
             .unwrap_or_default()
+    }
+}
+
+fn retention_cutoff_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+        .saturating_sub(LOG_RETENTION_MS)
+}
+
+fn prune_expired(q: &mut VecDeque<LlmLogEntry>) {
+    let cutoff = retention_cutoff_ms();
+    while q.front().is_some_and(|e| e.ts_ms < cutoff) {
+        q.pop_front();
     }
 }
