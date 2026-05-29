@@ -1,6 +1,7 @@
 //! Jetson LLM Gateway — SAR + Drone controller with HTTP API.
 //! Main entrypoint: startup telemetry and persistent Axum server.
 
+mod camera_stream;
 mod config;
 mod drone_params;
 mod drone_ws;

@@ -46,6 +46,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/drone/logs/mavlink", get(drone_mavlink_logs_handler))
         .route("/drone/logs/ws", get(drone_logs_ws_handler))
         .route("/logs/llm", get(llm_logs_handler))
+        .route("/camera/stream", get(camera_stream_handler))
         .route("/drone/ws", get(drone_ws_handler));
 
     #[cfg(feature = "eval")]
@@ -376,6 +377,11 @@ async fn drone_mavlink_logs_handler(
 
 async fn llm_logs_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "entries": state.infer_log.snapshot() }))
+}
+
+async fn camera_stream_handler() -> axum::response::Response {
+    let url = config::camera_stream_url();
+    crate::camera_stream::proxy_camera_stream(&url).await
 }
 
 async fn drone_logs_ws_handler(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {

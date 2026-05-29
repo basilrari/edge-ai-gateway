@@ -91,3 +91,23 @@ pub fn drone_telemetry_ws_url() -> String {
         .replacen("http://", "ws://", 1);
     format!("{ws_base}/v1/ws/telemetry")
 }
+
+/// Model server base URL (python-worker FastAPI). Default loopback :8000.
+pub fn model_server_base_url() -> String {
+    std::env::var("MODEL_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string())
+}
+
+/// MJPEG stream on model-server (gateway relays at `/camera/stream`).
+pub fn camera_stream_url() -> String {
+    let base = model_server_base_url().trim_end_matches('/').to_string();
+    std::env::var("CAMERA_STREAM_PATH").map_or_else(
+        |_| format!("{base}/video/stream"),
+        |path| {
+            if path.starts_with("http://") || path.starts_with("https://") {
+                path
+            } else {
+                format!("{base}/{}", path.trim_start_matches('/'))
+            }
+        },
+    )
+}
