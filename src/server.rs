@@ -17,6 +17,7 @@ use tracing::{info, info_span, warn};
 use uuid::Uuid;
 
 use crate::config;
+use crate::infer_log::InferLog;
 use crate::orchestrator::Orchestrator;
 use crate::types::{ApiResponse, GatewayCommand};
 
@@ -24,6 +25,7 @@ use crate::types::{ApiResponse, GatewayCommand};
 pub struct AppState {
     pub orchestrator: Arc<Mutex<Orchestrator>>,
     pub client: Client,
+    pub infer_log: InferLog,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -41,6 +43,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/drone/mission/upload", post(drone_mission_upload_handler))
         .route("/drone/mission/clear", post(drone_mission_clear_handler))
         .route("/drone/logs", get(drone_logs_handler))
+        .route("/drone/logs/mavlink", get(drone_mavlink_logs_handler))
+        .route("/drone/logs/ws", get(drone_logs_ws_handler))
+        .route("/logs/llm", get(llm_logs_handler))
         .route("/drone/ws", get(drone_ws_handler));
 
     #[cfg(feature = "eval")]
@@ -102,6 +107,11 @@ async fn infer_handler(
         }
     };
 
+    let prompt_text = match &cmd {
+        GatewayCommand::Infer { prompt } => Some(prompt.clone()),
+        _ => None,
+    };
+
     let mut orchestrator = state.orchestrator.lock().await;
     info!(
         action = "http_infer_received",
@@ -115,10 +125,25 @@ async fn infer_handler(
         .process_command(cmd, &state.client, &request_id)
         .await;
 
+    let model = orchestrator.current_model.clone();
+    let override_active = orchestrator.override_until.is_some();
+    let state_str = format!("{}", orchestrator.current_state);
+    drop(orchestrator);
+
+    if let Some(prompt) = prompt_text {
+        state.infer_log.push(
+            prompt,
+            outcome.llm_tool_json.clone(),
+            Some(outcome.action_taken.clone()),
+            model.clone(),
+            request_id.clone(),
+        );
+    }
+
     let api = ApiResponse {
-        state: format!("{}", orchestrator.current_state),
-        model: orchestrator.current_model.clone(),
-        override_active: orchestrator.override_until.is_some(),
+        state: state_str,
+        model,
+        override_active,
         category: outcome.category.clone(),
         tool_name: outcome.tool_name.clone(),
         pending_approval: outcome.pending_approval,
@@ -333,6 +358,29 @@ async fn drone_logs_handler(
         "drone_logs_proxy_failed",
     )
     .await
+}
+
+async fn drone_mavlink_logs_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = pick_request_id(&headers);
+    proxy_drone_get(
+        &state,
+        &request_id,
+        &config::drone_mavlink_logs_url(),
+        "drone_mavlink_logs_proxy_failed",
+    )
+    .await
+}
+
+async fn llm_logs_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "entries": state.infer_log.snapshot() }))
+}
+
+async fn drone_logs_ws_handler(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {
+    let drone_url = config::drone_logs_ws_url();
+    ws.on_upgrade(move |socket| crate::logs_ws::relay_logs_ws(socket, drone_url))
 }
 
 pub async fn run_http_server(state: AppState) {

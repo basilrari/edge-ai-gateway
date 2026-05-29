@@ -4,6 +4,8 @@
 mod config;
 mod drone_params;
 mod drone_ws;
+mod infer_log;
+mod logs_ws;
 mod llm;
 mod llm_decision;
 mod types;
@@ -18,6 +20,7 @@ use tokio::sync::Mutex;
 use tracing::info;
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
+use crate::infer_log::InferLog;
 use crate::orchestrator::Orchestrator;
 use crate::server::AppState;
 use crate::types::GatewayState;
@@ -123,6 +126,7 @@ async fn main() {
     let state = AppState {
         orchestrator: std::sync::Arc::new(Mutex::new(orchestrator)),
         client,
+        infer_log: InferLog::new(),
     };
 
     // Step 7 will make real gRPC call to python-worker from the /infer handler.
