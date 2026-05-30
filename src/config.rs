@@ -82,6 +82,11 @@ pub fn drone_mavlink_logs_url() -> String {
     format!("{base}/v1/logs/mavlink")
 }
 
+pub fn drone_logs_clear_url() -> String {
+    let base = drone_server_base_url().trim_end_matches('/').to_string();
+    format!("{base}/v1/logs/clear")
+}
+
 /// WebSocket telemetry stream on drone-http (gateway relays at `/drone/ws`).
 pub fn drone_telemetry_ws_url() -> String {
     let base = drone_server_base_url();

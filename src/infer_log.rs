@@ -67,6 +67,12 @@ impl InferLog {
             })
             .unwrap_or_default()
     }
+
+    pub fn clear(&self) {
+        if let Ok(mut q) = self.0.lock() {
+            q.clear();
+        }
+    }
 }
 
 fn retention_cutoff_ms() -> u64 {

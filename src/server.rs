@@ -43,9 +43,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/drone/mission/upload", post(drone_mission_upload_handler))
         .route("/drone/mission/clear", post(drone_mission_clear_handler))
         .route("/drone/logs", get(drone_logs_handler))
+        .route("/drone/logs/clear", post(drone_logs_clear_handler))
         .route("/drone/logs/mavlink", get(drone_mavlink_logs_handler))
         .route("/drone/logs/ws", get(drone_logs_ws_handler))
         .route("/logs/llm", get(llm_logs_handler))
+        .route("/logs/llm/clear", post(llm_logs_clear_handler))
+        .route("/logs/clear-all", post(logs_clear_all_handler))
         .route("/camera/stream", get(camera_stream_handler))
         .route("/drone/ws", get(drone_ws_handler));
 
@@ -377,6 +380,63 @@ async fn drone_mavlink_logs_handler(
 
 async fn llm_logs_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "entries": state.infer_log.snapshot() }))
+}
+
+async fn llm_logs_clear_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    state.infer_log.clear();
+    Json(serde_json::json!({ "ok": true }))
+}
+
+async fn drone_logs_clear_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let request_id = pick_request_id(&headers);
+    let url = config::drone_logs_clear_url();
+    let send = state
+        .client
+        .post(&url)
+        .header("x-request-id", &request_id)
+        .json(&body)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await;
+
+    match send {
+        Ok(resp) => {
+            let status =
+                StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            let text = resp.text().await.unwrap_or_default();
+            let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({
+                "ok": false,
+                "error": "drone_server_non_json_body"
+            }));
+            (status, Json(json))
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": format!("drone_logs_clear_proxy_failed: {e}")
+            })),
+        ),
+    }
+}
+
+async fn logs_clear_all_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    state.infer_log.clear();
+    let url = config::drone_logs_clear_url();
+    let drone_ok = state
+        .client
+        .post(&url)
+        .json(&serde_json::json!({ "target": "all" }))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false);
+    Json(serde_json::json!({ "ok": true, "drone_ok": drone_ok }))
 }
 
 async fn camera_stream_handler() -> axum::response::Response {
