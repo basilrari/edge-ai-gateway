@@ -9,6 +9,7 @@ mod infer_log;
 mod logs_ws;
 mod llm;
 mod llm_decision;
+mod mcp_proxy;
 mod types;
 mod orchestrator;
 mod server;
