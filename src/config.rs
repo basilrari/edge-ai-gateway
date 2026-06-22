@@ -97,11 +97,6 @@ pub fn drone_telemetry_ws_url() -> String {
     format!("{ws_base}/v1/ws/telemetry")
 }
 
-/// edge-ai-MCP SSE server (Hermes / external MCP clients). Gateway proxies `/mcp/*`.
-pub fn mcp_sse_base_url() -> String {
-    std::env::var("MCP_SSE_URL").unwrap_or_else(|_| "http://127.0.0.1:8765".to_string())
-}
-
 /// Model server base URL (python-worker FastAPI). Default loopback :8000.
 pub fn model_server_base_url() -> String {
     std::env::var("MODEL_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string())

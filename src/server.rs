@@ -6,7 +6,7 @@ use axum::{
     extract::ws::WebSocketUpgrade,
     extract::State,
     http::{HeaderMap, Method, StatusCode},
-    routing::{any, get, post},
+    routing::{get, post},
     Json, Router,
 };
 use reqwest::Client;
@@ -50,10 +50,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/logs/llm/clear", post(llm_logs_clear_handler))
         .route("/logs/clear-all", post(logs_clear_all_handler))
         .route("/camera/stream", get(camera_stream_handler))
-        .route("/drone/ws", get(drone_ws_handler))
-        .route("/mcp/sse", any(crate::mcp_proxy::mcp_proxy_handler))
-        .route("/mcp/messages", any(crate::mcp_proxy::mcp_proxy_handler))
-        .route("/mcp/messages/", any(crate::mcp_proxy::mcp_proxy_handler));
+        .route("/drone/ws", get(drone_ws_handler));
 
     #[cfg(feature = "eval")]
     let app = app.merge(crate::eval::eval_router());
