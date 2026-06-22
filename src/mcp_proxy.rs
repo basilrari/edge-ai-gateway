@@ -18,6 +18,7 @@ pub async fn mcp_proxy_handler(
 ) -> Result<Response, StatusCode> {
     let (parts, body) = req.into_parts();
     let path = parts.uri.path();
+    // Public URL is /mcp/*; upstream MCP SSE listens at /sse and /messages/.
     let suffix = path.strip_prefix("/mcp").unwrap_or(path);
     let mut target = format!(
         "{}{}",
