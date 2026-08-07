@@ -247,6 +247,6 @@ Optional **`params`** (object) for tools that need structured arguments, e.g. `g
 ## Tool names reference
 
 - **model**: `human_detect`, `flood_seg`, `flood_class`
-- **drone**: see [src/llm.rs](src/llm.rs) system prompt and [drone-server/](../drone-server/) (e.g. `arm`, `takeoff`, `goto_location`, `circle_search`, `return_to_home`, …)
+- **drone**: `arm`, `takeoff`, `goto_location`, `start_mission`, `return_to_home`, … — authoritative list in [src/llm.rs](src/llm.rs) `SAR_SYSTEM_PROMPT` (LLM allowlist; not every drone-http tool is exposed to the model).
 
 Use **GET /status** and the **active_command** field to show the current drone or model command in the UI; use **POST /infer** to send user prompts or override/clear-override.

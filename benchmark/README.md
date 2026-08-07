@@ -1,5 +1,7 @@
 # LLM edge benchmark (`/eval` and `/eval/e2e`)
 
+LLM decisions are driven by **`SAR_SYSTEM_PROMPT`** in [`../src/llm.rs`](../src/llm.rs) (example-first `{"tasks":[...]}` router, max 5 steps). Case **Expected output** must match that contract (`invalid_request` for no-op).
+
 Two modes:
 
 | Mode | Endpoint | Drone apply | Use |

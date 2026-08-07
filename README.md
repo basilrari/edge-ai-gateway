@@ -9,7 +9,7 @@ The Gateway is the **central router** in the [SAR drone architecture](../README.
 ## Overview
 
 - **Server**: Axum HTTP server on `http://0.0.0.0:3000` (CORS enabled for all origins).
-- **LLM**: Sends prompts to `http://localhost:8080/v1/chat/completions` (e.g. local LLM server). The LLM returns JSON: preferred shape `{"tasks":[{"category":"drone"|"model","name":"<tool>","params":{}}]}` (up to **5** steps), or legacy `{"category":"drone"|"model"|"none","name":"..."}`. Proposals include `pending_approval: true` and, for multi-step plans, **`tools`**: an array of steps. The frontend accepts **once**, then sends **ApplyTool** (single step) or **ApplyToolSequence** (multiple steps). Drone steps are applied sequentially; execution **stops on the first failed** drone HTTP call.
+- **LLM**: Sends prompts to `http://localhost:8080/v1/chat/completions` (e.g. local LLM server). System prompt is **`SAR_SYSTEM_PROMPT`** in `src/llm.rs` (example-first JSON `tasks` router, max **5** steps). The LLM returns `{"tasks":[...]}` with `category` `drone` \| `model` \| `none`. Proposals include `pending_approval: true` and, for multi-step plans, **`tools`**: an array of steps. The frontend accepts **once**, then sends **ApplyTool** (single step) or **ApplyToolSequence** (multiple steps). Drone steps are applied sequentially; execution **stops on the first failed** drone HTTP call.
 - **States**: `IDLE`, `ACTIVE` (last applied tool), `OVERRIDE_ACTIVE` (manual model override for a timeout).
 
 ## Build & Run
@@ -60,6 +60,6 @@ Response: JSON with **state**, **model**, **override_active**, **category**, **t
 ## Tool Names (reference)
 
 - **Model**: `human_detect`, `flood_seg`, `flood_class` (short names; see `llm.rs` system prompt).
-- **Drone**: see `llm.rs` / `drone-server` (e.g. `goto_location`, `takeoff`, `circle_search`, `return_to_home`, …).
+- **Drone**: `arm`, `disarm`, `takeoff`, `goto_location`, `start_mission`, `mission_set_current`, `mission_interrupt`, `mission_resume`, `return_to_home`, `land_immediately`, `hover`, `set_mode_guided`, `set_mode_auto` (full list in `SAR_SYSTEM_PROMPT` in `src/llm.rs`; drone-http may expose additional tools not offered to the LLM).
 
 For full request/response contracts and examples for frontend or agent use, see **AGENTS.md**.
