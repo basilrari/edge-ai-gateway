@@ -50,6 +50,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/logs/llm/clear", post(llm_logs_clear_handler))
         .route("/logs/clear-all", post(logs_clear_all_handler))
         .route("/camera/stream", get(camera_stream_handler))
+        .route("/camera/webrtc/ice", get(camera_webrtc_ice_handler))
+        .route("/camera/webrtc/offer", post(camera_webrtc_offer_handler))
         .route("/drone/ws", get(drone_ws_handler))
         .route("/mcp", any(crate::mcp_proxy::mcp_proxy_handler))
         .route("/mcp/sse", any(crate::mcp_proxy::mcp_proxy_handler))
@@ -491,6 +493,54 @@ async fn logs_clear_all_handler(State(state): State<AppState>) -> Json<serde_jso
 async fn camera_stream_handler() -> axum::response::Response {
     let url = config::camera_stream_url();
     crate::camera_stream::proxy_camera_stream(&url).await
+}
+
+async fn camera_webrtc_ice_handler() -> Json<serde_json::Value> {
+    Json(crate::webrtc_ice::webrtc_ice_json())
+}
+
+async fn camera_webrtc_offer_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let url = config::camera_webrtc_offer_url();
+    let resp = state
+        .client
+        .post(&url)
+        .json(&body)
+        .timeout(Duration::from_secs(45))
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({
+                    "error": format!("camera_webrtc_proxy_failed: {e}")
+                })),
+            )
+        })?;
+
+    let status = resp.status();
+    let value: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": format!("camera_webrtc_upstream_parse_failed: {e}")
+            })),
+        )
+    })?;
+
+    if status.is_success() {
+        Ok(Json(value))
+    } else {
+        Err((
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": "camera_webrtc_upstream_error",
+                "detail": value
+            })),
+        ))
+    }
 }
 
 async fn drone_logs_ws_handler(ws: WebSocketUpgrade) -> impl axum::response::IntoResponse {

@@ -112,9 +112,24 @@ pub fn mcp_api_key() -> Option<String> {
     std::env::var("MCP_API_KEY").ok().filter(|s| !s.is_empty())
 }
 
-/// Model server base URL (python-worker FastAPI). Default loopback :8000.
+/// Model server base URL (Drone_LLM FastAPI). Default loopback :8000.
 pub fn model_server_base_url() -> String {
     std::env::var("MODEL_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string())
+}
+
+/// Camera / WebRTC signaling on Drone_LLM (defaults to model server URL).
+pub fn camera_server_base_url() -> String {
+    std::env::var("CAMERA_SERVER_URL")
+        .or_else(|_| std::env::var("MODEL_SERVER_URL"))
+        .unwrap_or_else(|_| "http://127.0.0.1:8000".to_string())
+}
+
+/// WebRTC signaling: browser POSTs SDP offer; camera server returns answer.
+pub fn camera_webrtc_offer_url() -> String {
+    format!(
+        "{}/camera/webrtc/offer",
+        camera_server_base_url().trim_end_matches('/')
+    )
 }
 
 /// Optional client dispatch time (ms since epoch); correlation only.

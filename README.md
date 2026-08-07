@@ -4,7 +4,7 @@ HTTP API gateway for SAR (Search and Rescue) drone control. It accepts natural-l
 
 ## How this ties into the project
 
-The Gateway is the **central router** in the [SAR drone architecture](../README.md). The **frontend** sends user prompts (and **ApplyTool** / **ApplyToolSequence** after the user accepts) to this server. The Gateway calls the **LLM** to get structured tool call(s); when the user accepts, it applies them in order. **Model** tools are forwarded to the **Model Server** (e.g. python-worker / ROS2) for flood segmentation, flood classification, human detection. **Drone** tools are forwarded to the **Drone Server** ([drone-server/](../drone-server/)) via `drone-http` (`POST /v1/apply-tool`). The Gateway does not talk MAVLink itself; it delegates drone actions to the Drone Server.
+The Gateway is the **central router** in the [SAR drone architecture](../README.md). The **frontend** sends user prompts (and **ApplyTool** / **ApplyToolSequence** after the user accepts) to this server. The Gateway calls the **LLM** to get structured tool call(s); when the user accepts, it applies them in order. **Model** tools are forwarded to the **Model Server** ([Drone_LLM](../Drone_LLM/)) for flood segmentation, flood classification, human detection. **Drone** tools are forwarded to the **Drone Server** ([drone-server/](../drone-server/)) via `drone-http` (`POST /v1/apply-tool`). The Gateway does not talk MAVLink itself; it delegates drone actions to the Drone Server.
 
 ## Overview
 

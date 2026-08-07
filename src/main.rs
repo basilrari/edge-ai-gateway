@@ -14,6 +14,7 @@ mod timing;
 mod types;
 mod orchestrator;
 mod server;
+mod webrtc_ice;
 #[cfg(feature = "eval")]
 mod eval;
 

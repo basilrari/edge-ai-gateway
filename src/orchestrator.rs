@@ -189,7 +189,7 @@ impl Orchestrator {
                     request_id = %request_id,
                     step = idx,
                     tool_name = %tool.name,
-                    reason = "model path (python-worker) not wired yet"
+                    reason = "model path (Drone_LLM) not wired yet"
                 );
                 model_steps.push(ModelStepTiming {
                     step_index: idx,
@@ -512,7 +512,7 @@ impl Orchestrator {
                         action = "apply_tool_send_to_python",
                         request_id = %request_id,
                         tool_name = %name,
-                        reason = "user accepted; model path (python-worker) not wired yet"
+                        reason = "user accepted; model path (Drone_LLM) not wired yet"
                     );
                 }
 
@@ -660,7 +660,7 @@ impl Orchestrator {
                                 request_id = %request_id,
                                 step = idx,
                                 tool_name = %tool.name,
-                                reason = "model path (python-worker) not wired yet"
+                                reason = "model path (Drone_LLM) not wired yet"
                             );
                             last_success = Some(tool.clone());
                         } else {
