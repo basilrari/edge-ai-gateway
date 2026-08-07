@@ -21,6 +21,11 @@ pub fn llm_chat_completions_url() -> String {
     }
 }
 
+/// OpenAI `model` field for chat completions (must match llama-server `--alias`).
+pub fn llm_chat_model() -> String {
+    std::env::var("LLM_CHAT_MODEL").unwrap_or_else(|_| "qwen".to_string())
+}
+
 /// Base URL for `drone-http` (see `drone-server` binary). Default loopback on Jetson.
 pub fn drone_server_base_url() -> String {
     std::env::var("DRONE_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:3001".to_string())
@@ -97,9 +102,62 @@ pub fn drone_telemetry_ws_url() -> String {
     format!("{ws_base}/v1/ws/telemetry")
 }
 
+/// Local edge-ai-MCP SSE server (not exposed publicly except via authenticated gateway proxy).
+pub fn mcp_sse_base_url() -> String {
+    std::env::var("MCP_SSE_URL").unwrap_or_else(|_| "http://127.0.0.1:8765".to_string())
+}
+
+/// Bearer / X-API-Key for `GET/POST /mcp/*`. When unset, public MCP routes return 503.
+pub fn mcp_api_key() -> Option<String> {
+    std::env::var("MCP_API_KEY").ok().filter(|s| !s.is_empty())
+}
+
 /// Model server base URL (python-worker FastAPI). Default loopback :8000.
 pub fn model_server_base_url() -> String {
     std::env::var("MODEL_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string())
+}
+
+/// Optional client dispatch time (ms since epoch); correlation only.
+pub fn client_dispatch_ms_from_headers(headers: &axum::http::HeaderMap) -> Option<u64> {
+    headers
+        .get("x-client-dispatch-ms")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse().ok())
+}
+
+/// When true, infer/apply waits for FC `COMMAND_ACK` on each drone step (via drone-http).
+pub fn drone_wait_for_ack_default() -> bool {
+    std::env::var("DRONE_WAIT_FOR_ACK")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+pub fn drone_ack_timeout_ms_default() -> u64 {
+    std::env::var("DRONE_ACK_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3000)
+}
+
+/// Allowed drone base URL for eval E2E (comma-separated prefixes). Default: loopback only.
+pub fn eval_sitl_drone_url_prefixes() -> Vec<String> {
+    std::env::var("EVAL_SITL_DRONE_URL_PREFIXES")
+        .unwrap_or_else(|_| "http://127.0.0.1:3001,http://localhost:3001".to_string())
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+pub fn eval_sitl_safety_token() -> Option<String> {
+    std::env::var("EVAL_SITL_TOKEN").ok().filter(|s| !s.is_empty())
+}
+
+pub fn eval_sitl_drone_url_allowed() -> bool {
+    let base = drone_server_base_url();
+    eval_sitl_drone_url_prefixes()
+        .iter()
+        .any(|p| base.starts_with(p))
 }
 
 /// MJPEG stream on model-server (gateway relays at `/camera/stream`).

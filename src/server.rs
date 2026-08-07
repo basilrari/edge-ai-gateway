@@ -1,12 +1,12 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::ws::WebSocketUpgrade,
     extract::State,
     http::{HeaderMap, Method, StatusCode},
-    routing::{get, post},
+    routing::{any, get, post},
     Json, Router,
 };
 use reqwest::Client;
@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::config;
 use crate::infer_log::InferLog;
 use crate::orchestrator::Orchestrator;
-use crate::types::{ApiResponse, GatewayCommand};
+use crate::types::{ApiResponse, GatewayCommand, HandlerTimingInput, ProcessOptions};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -50,7 +50,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/logs/llm/clear", post(llm_logs_clear_handler))
         .route("/logs/clear-all", post(logs_clear_all_handler))
         .route("/camera/stream", get(camera_stream_handler))
-        .route("/drone/ws", get(drone_ws_handler));
+        .route("/drone/ws", get(drone_ws_handler))
+        .route("/mcp", any(crate::mcp_proxy::mcp_proxy_handler))
+        .route("/mcp/sse", any(crate::mcp_proxy::mcp_proxy_handler))
+        .route("/mcp/messages", any(crate::mcp_proxy::mcp_proxy_handler))
+        .route("/mcp/messages/", any(crate::mcp_proxy::mcp_proxy_handler));
 
     #[cfg(feature = "eval")]
     let app = app.merge(crate::eval::eval_router());
@@ -107,6 +111,9 @@ async fn infer_handler(
                 tool_params: None,
                 tools: None,
                 llm_tool_json: None,
+                pipeline: None,
+                drone_steps: vec![],
+                model_steps: vec![],
             });
         }
     };
@@ -116,7 +123,34 @@ async fn infer_handler(
         _ => None,
     };
 
+    let gateway_received_ms = crate::timing::unix_ms_now();
+    let client_dispatch_ms = config::client_dispatch_ms_from_headers(&headers);
+    let lock_wait_start = Instant::now();
     let mut orchestrator = state.orchestrator.lock().await;
+    let queue_wait_ms = lock_wait_start.elapsed().as_millis() as u64;
+
+    let wait_header = headers
+        .get("x-wait-for-ack")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"));
+    let mut options = ProcessOptions::default();
+    if let Some(force) = wait_header {
+        options.wait_for_drone_ack = force;
+    }
+    if let Some(ms) = headers
+        .get("x-ack-timeout-ms")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse().ok())
+    {
+        options.ack_timeout_ms = ms;
+    }
+
+    let handler_timing = HandlerTimingInput {
+        gateway_received_ms,
+        queue_wait_ms,
+        client_dispatch_ms,
+    };
+
     info!(
         action = "http_infer_received",
         request_id = %request_id,
@@ -126,7 +160,13 @@ async fn infer_handler(
     );
 
     let outcome = orchestrator
-        .process_command(cmd, &state.client, &request_id)
+        .process_command(
+            cmd,
+            &state.client,
+            &request_id,
+            Some(handler_timing),
+            options,
+        )
         .await;
 
     let model = orchestrator.current_model.clone();
@@ -163,6 +203,9 @@ async fn infer_handler(
         tool_params: outcome.tool_params,
         tools: outcome.tools,
         llm_tool_json: outcome.llm_tool_json,
+        pipeline: outcome.pipeline,
+        drone_steps: outcome.drone_steps,
+        model_steps: outcome.model_steps,
     };
 
     Json(api)
@@ -179,7 +222,13 @@ async fn status_handler(
     let mut orchestrator = state.orchestrator.lock().await;
 
     let outcome = orchestrator
-        .process_command(GatewayCommand::Status, &state.client, &request_id)
+        .process_command(
+            GatewayCommand::Status,
+            &state.client,
+            &request_id,
+            None,
+            ProcessOptions::default(),
+        )
         .await;
 
     Json(serde_json::json!({

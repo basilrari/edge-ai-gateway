@@ -1,5 +1,5 @@
 Input: hi
-Expected output: {"tasks":[{"category":"none","name":"ambiguous_request"}]}
+Expected output: {"tasks":[{"category":"none","name":"invalid_request"}]}
 
 Input: Search for people
 Expected output: {"tasks":[{"category":"model","name":"human_detect"}]}

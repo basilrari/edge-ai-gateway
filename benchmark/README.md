@@ -1,6 +1,11 @@
-# LLM edge benchmark (`/eval`)
+# LLM edge benchmark (`/eval` and `/eval/e2e`)
 
-Benchmarks the gateway LLM tool path **without** applying drone commands (safe for 100+ prompts).
+Two modes:
+
+| Mode | Endpoint | Drone apply | Use |
+|------|----------|-------------|-----|
+| **decision** (default) | `POST /eval` | No | LLM JSON accuracy + LLM timing |
+| **e2e** | `POST /eval/e2e` | Yes (SITL, ACK wait) | Full pipeline through drone-http + FC `COMMAND_ACK` |
 
 ## Prerequisites
 
@@ -18,7 +23,7 @@ Benchmarks the gateway LLM tool path **without** applying drone commands (safe f
    cargo build --release
    ```
 
-3. Copy your case file onto the machine (e.g. `llm_edge_test_cases_100.txt`). Format per block:
+3. Copy your case file onto the machine (e.g. `llm_edge_test_cases_100.txt` or `e2e_sitl_smoke.txt`). Format per block:
 
    ```text
    Input: your prompt here
@@ -41,13 +46,27 @@ python3 run_eval.py \
   --out results/run_001
 ```
 
+SITL end-to-end (requires `EVAL_SITL_TOKEN` on gateway, loopback `DRONE_SERVER_URL`, SITL + drone-http):
+
+```bash
+export EVAL_SITL_TOKEN=your-secret
+python3 run_eval.py \
+  --mode e2e \
+  --sitl-token your-secret \
+  --file e2e_sitl_smoke.txt \
+  --gateway http://127.0.0.1:3000 \
+  --out results/e2e_001
+```
+
 Options:
 
 | Flag | Meaning |
 |------|---------|
+| `--mode` | `decision` (default) or `e2e` |
+| `--sitl-token` | Required for `e2e` (must match gateway `EVAL_SITL_TOKEN`) |
+| `--ack-timeout-ms` | FC ACK wait per drone step in e2e mode (default 3000) |
 | `--limit N` | Only first N cases (smoke test) |
 | `--float-tol` | Numeric tolerance for param comparison (default `1e-5`) |
-| `--tegra` | Jetson only: background `tegrastats` log + per-case snapshots |
 
 Smoke (2 built-in cases):
 
@@ -65,13 +84,17 @@ python3 run_eval.py --file sample_smoke.txt --gateway http://127.0.0.1:3000 --ou
 | `tegra_suite.log` | Raw `tegrastats` samples (with `--tegra`) |
 | `tegra_summary.json` | Parsed aggregates from the suite log |
 
+| `--tegra` | Jetson only: background `tegrastats` log + per-case snapshots |
+
 ## Metrics
 
-- **LLM latency** — `eval_response.llm_latency_ms` (HTTP time to chat completions only).
-- **E2E parse** — `eval_response.e2e_parse_ms` (gateway: LLM + parse + normalize for response).
-- **Client E2E** — `e2e_client_ms` in JSONL (includes network; optional extra signal).
-- **JSON valid rate** — fraction with `json_valid == true`.
-- **Intent / params** — strict uses `llm_tool_json_raw`; effective uses `llm_tool_json` (after altitude normalization).
+- **LLM latency** — `llm_latency_ms` / `llm_http_ms` + `llm_parse_ms` on decision responses.
+- **E2E parse** — `e2e_parse_ms` (decision mode only).
+- **E2E handler** — `latency_ms` + `pipeline` on `/eval/e2e` (gateway through drone ACK).
+- **Client E2E** — `e2e_client_ms` in JSONL.
+- **Prompt → final ACK** — `pipeline.prompt_to_final_ack_ms` when ACK wait is enabled.
+
+Production UI and `POST /infer` return the same `pipeline`, `drone_steps`, and client headers (`x-client-dispatch-ms`, optional `x-wait-for-ack`).
 
 ## Removing eval from the codebase
 

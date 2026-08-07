@@ -126,11 +126,28 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0, help="Max cases (0 = all)")
     ap.add_argument("--float-tol", type=float, default=1e-5, help="Tolerance for numeric params")
     ap.add_argument("--tegra", action="store_true", help="Sample tegrastats (Jetson)")
+    ap.add_argument(
+        "--mode",
+        choices=("decision", "e2e"),
+        default="decision",
+        help="decision=POST /eval (no drone apply); e2e=POST /eval/e2e (SITL ACK)",
+    )
+    ap.add_argument(
+        "--sitl-token",
+        default="",
+        help="EVAL_SITL_TOKEN value (required for --mode e2e)",
+    )
+    ap.add_argument("--ack-timeout-ms", type=int, default=3000, help="E2E ACK timeout")
     args = ap.parse_args()
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    eval_url = args.gateway.rstrip("/") + "/eval"
+    base = args.gateway.rstrip("/")
+    eval_url = base + ("/eval/e2e" if args.mode == "e2e" else "/eval")
+
+    if args.mode == "e2e" and not args.sitl_token.strip():
+        print("error: --mode e2e requires --sitl-token (gateway EVAL_SITL_TOKEN)", file=sys.stderr)
+        return 2
 
     cases = load_cases(args.file)
     if args.limit and args.limit > 0:
@@ -158,7 +175,20 @@ def main() -> int:
             t0 = time.perf_counter()
             tegra_before = tegra_snapshot() if args.tegra and tegrastats_available() else None
             try:
-                resp = _post_json(eval_url, {"prompt": c.input_text})
+                if args.mode == "e2e":
+                    resp = _post_json(
+                        eval_url,
+                        {
+                            "prompt": c.input_text,
+                            "target": "sitl",
+                            "wait_for": "ack",
+                            "ack_timeout_ms": args.ack_timeout_ms,
+                            "safety_token": args.sitl_token.strip(),
+                        },
+                        timeout_sec=180.0,
+                    )
+                else:
+                    resp = _post_json(eval_url, {"prompt": c.input_text})
             except Exception as e:
                 row = {
                     "case_index": c.index,
@@ -179,8 +209,13 @@ def main() -> int:
 
             strict_tasks = _tasks_from_tool_json(resp.get("llm_tool_json_raw"))
             eff_tasks = _tasks_from_tool_json(resp.get("llm_tool_json"))
+            if args.mode == "e2e":
+                strict_tasks = _tasks_from_tool_json(resp.get("llm_tool_json"))
+                eff_tasks = strict_tasks
 
-            jv = bool(resp.get("json_valid"))
+            jv = bool(resp.get("json_valid")) if args.mode == "decision" else bool(
+                resp.get("llm_tool_json") or resp.get("tools")
+            )
             is_strict = _intent_match(exp_tasks, strict_tasks)
             is_eff = _intent_match(exp_tasks, eff_tasks)
             ps_strict = _params_match(exp_tasks, strict_tasks, args.float_tol) if is_strict else False
@@ -190,6 +225,7 @@ def main() -> int:
                 "case_index": c.index,
                 "input": c.input_text,
                 "expected": c.expected,
+                "mode": args.mode,
                 "eval_response": resp,
                 "e2e_client_ms": e2e_ms,
                 "json_valid": jv,
@@ -241,7 +277,21 @@ def main() -> int:
     e2e_ms = [
         float(r["eval_response"]["e2e_parse_ms"])
         for r in rows
-        if r.get("eval_response") and "e2e_parse_ms" in r["eval_response"]
+        if r.get("eval_response")
+        and "e2e_parse_ms" in r["eval_response"]
+        and args.mode == "decision"
+    ]
+    handler_ms = [
+        float(r["eval_response"].get("latency_ms", 0))
+        for r in rows
+        if r.get("eval_response") and args.mode == "e2e"
+    ]
+    pipeline_ack = [
+        float(r["eval_response"].get("pipeline", {}).get("prompt_to_final_ack_ms", 0))
+        for r in rows
+        if r.get("eval_response")
+        and r["eval_response"].get("pipeline")
+        and r["eval_response"]["pipeline"].get("prompt_to_final_ack_ms") is not None
     ]
 
     def lat_stats(xs: list[float]) -> dict[str, float]:
@@ -257,6 +307,7 @@ def main() -> int:
 
     summary = {
         "cases": n,
+        "mode": args.mode,
         "eval_url": eval_url,
         "json_valid_rate": n_json / n if n else 0.0,
         "intent_strict_rate": n_is / n if n else 0.0,
@@ -267,6 +318,8 @@ def main() -> int:
         "params_effective_of_intent_effective": n_pe / n_ie if n_ie else None,
         "llm_latency_ms": lat_stats(llm_ms),
         "e2e_parse_ms_gateway": lat_stats(e2e_ms),
+        "e2e_handler_ms": lat_stats(handler_ms),
+        "prompt_to_final_ack_ms": lat_stats(pipeline_ack),
         "e2e_client_ms": lat_stats([float(r["e2e_client_ms"]) for r in rows if "e2e_client_ms" in r]),
         "tegra_suite": tegra_summary,
     }

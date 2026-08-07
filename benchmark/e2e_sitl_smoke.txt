@@ -1,0 +1,7 @@
+TEST 1 — No-op greeting
+Input: hi
+Expected output: {"tasks":[{"category":"none","name":"invalid_request"}]}
+
+TEST 2 — Safe hover (SITL)
+Input: Just hover in place for now
+Expected output: {"tasks":[{"category":"drone","name":"hover"}]}

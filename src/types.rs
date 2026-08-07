@@ -18,6 +18,71 @@ impl fmt::Display for GatewayState {
     }
 }
 
+#[derive(serde::Serialize, Debug, Clone, Default)]
+pub struct PipelineTiming {
+    pub gateway_received_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gateway_response_ms: Option<u64>,
+    pub queue_wait_ms: u64,
+    pub handler_total_ms: u64,
+    pub llm_http_ms: u64,
+    pub llm_parse_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_total_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_to_final_ack_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_dispatch_ms: Option<u64>,
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct DroneStepTiming {
+    pub step_index: usize,
+    pub tool: String,
+    pub step_id: String,
+    pub drone_http_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ack_wait_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ack_result: Option<String>,
+    pub http_status: u16,
+    pub ok: bool,
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct ModelStepTiming {
+    pub step_index: usize,
+    pub tool: String,
+    pub placeholder: bool,
+}
+
+/// Per-request options for orchestrator (infer / eval E2E).
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessOptions {
+    pub wait_for_drone_ack: bool,
+    pub ack_timeout_ms: u64,
+}
+
+impl Default for ProcessOptions {
+    fn default() -> Self {
+        Self {
+            wait_for_drone_ack: crate::config::drone_wait_for_ack_default(),
+            ack_timeout_ms: crate::config::drone_ack_timeout_ms_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct HandlerTimingInput {
+    pub gateway_received_ms: u64,
+    pub queue_wait_ms: u64,
+    pub client_dispatch_ms: Option<u64>,
+}
+
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct ToolCall {
     pub category: String,
@@ -80,6 +145,12 @@ pub struct ApiResponse {
     /// Parsed tool JSON from the LLM assistant message (`{"tasks":[...]}` only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_tool_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<PipelineTiming>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drone_steps: Vec<DroneStepTiming>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_steps: Vec<ModelStepTiming>,
 }
 
 /// Result of [`crate::orchestrator::Orchestrator::process_command`].
@@ -100,4 +171,10 @@ pub struct CommandOutcome {
     pub tool_params: Option<serde_json::Value>,
     pub tools: Option<Vec<ToolCall>>,
     pub llm_tool_json: Option<String>,
+    pub pipeline: Option<PipelineTiming>,
+    pub drone_steps: Vec<DroneStepTiming>,
+    pub model_steps: Vec<ModelStepTiming>,
+    pub llm_http_ms: u64,
+    pub llm_parse_ms: u64,
+    pub apply_total_ms: Option<u64>,
 }

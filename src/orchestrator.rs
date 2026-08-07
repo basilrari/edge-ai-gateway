@@ -2,7 +2,11 @@ use crate::config;
 use crate::drone_params::{normalize_drone_tasks, normalize_drone_tool_params, tasks_display_json};
 use crate::llm::{normalize_none_reason, LlmToolPayload};
 use crate::llm_decision::run_llm_tool_decision;
-use crate::types::{CommandOutcome, GatewayCommand, GatewayState, ToolCall};
+use crate::timing::{drone_step_id, unix_ms_now};
+use crate::types::{
+    CommandOutcome, DroneStepTiming, GatewayCommand, GatewayState, HandlerTimingInput,
+    ModelStepTiming, PipelineTiming, ProcessOptions, ToolCall,
+};
 use reqwest::Client;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
@@ -92,6 +96,7 @@ impl Orchestrator {
         client: &Client,
         request_id: &str,
         override_active: bool,
+        options: ProcessOptions,
         trace: &mut Vec<String>,
     ) -> (
         String,
@@ -101,7 +106,11 @@ impl Orchestrator {
         Option<u16>,
         Option<u64>,
         Option<String>,
+        Vec<DroneStepTiming>,
+        Vec<ModelStepTiming>,
+        u64,
     ) {
+        let apply_start = Instant::now();
         if tools.is_empty() {
             trace.push("stage=apply_tasks_empty".into());
             return (
@@ -112,6 +121,9 @@ impl Orchestrator {
                 None,
                 None,
                 None,
+                vec![],
+                vec![],
+                0,
             );
         }
 
@@ -121,19 +133,36 @@ impl Orchestrator {
         let mut drone_http_status: Option<u16> = None;
         let mut drone_http_ms: Option<u64> = None;
         let mut drone_error: Option<String> = None;
+        let mut drone_steps = Vec::new();
+        let mut model_steps = Vec::new();
 
         for (idx, tool) in tools.iter().enumerate() {
             if tool.category == "drone" {
+                let step_id = drone_step_id(request_id, idx);
                 let r = drone_apply_via_http(
                     client,
                     request_id,
+                    &step_id,
                     &tool.name,
                     &tool.params,
+                    options,
                     trace,
                 )
                 .await;
                 drone_http_status = Some(r.http_status);
                 drone_http_ms = Some(r.elapsed_ms);
+                drone_steps.push(DroneStepTiming {
+                    step_index: idx,
+                    tool: tool.name.clone(),
+                    step_id: step_id.clone(),
+                    drone_http_ms: r.elapsed_ms,
+                    dispatch_ms: r.dispatch_ms,
+                    ack_wait_ms: r.ack_wait_ms,
+                    completion_status: r.completion_status.clone(),
+                    ack_result: r.ack_result.clone(),
+                    http_status: r.http_status,
+                    ok: r.mavlink_ok,
+                });
                 if r.mavlink_ok {
                     last_success = Some(tool.clone());
                     trace.push(format!("stage=sequence_step_ok idx={} tool={}", idx, tool.name));
@@ -162,6 +191,11 @@ impl Orchestrator {
                     tool_name = %tool.name,
                     reason = "model path (python-worker) not wired yet"
                 );
+                model_steps.push(ModelStepTiming {
+                    step_index: idx,
+                    tool: tool.name.clone(),
+                    placeholder: true,
+                });
                 last_success = Some(tool.clone());
             } else {
                 trace.push(format!(
@@ -211,6 +245,9 @@ impl Orchestrator {
             );
         }
 
+        let apply_total_ms = apply_start.elapsed().as_millis() as u64;
+        trace.push(format!("stage=infer_auto_apply_done ms={apply_total_ms}"));
+
         (
             action_taken,
             category,
@@ -219,6 +256,9 @@ impl Orchestrator {
             drone_http_status,
             drone_http_ms,
             drone_error,
+            drone_steps,
+            model_steps,
+            apply_total_ms,
         )
     }
 
@@ -228,10 +268,17 @@ impl Orchestrator {
         cmd: GatewayCommand,
         client: &Client,
         request_id: &str,
+        handler_timing: Option<HandlerTimingInput>,
+        options: ProcessOptions,
     ) -> CommandOutcome {
         let start = Instant::now();
         let mut trace = vec![format!("gateway_request_id={request_id}")];
         let mut llm_latency_ms: u64 = 0;
+        let mut llm_http_ms: u64 = 0;
+        let mut llm_parse_ms: u64 = 0;
+        let mut apply_total_ms: Option<u64> = None;
+        let mut drone_steps: Vec<DroneStepTiming> = Vec::new();
+        let mut model_steps: Vec<ModelStepTiming> = Vec::new();
         let mut new_state = self.current_state;
         // Overwritten on every path below before use in CommandOutcome.
         let mut action_taken = String::new();
@@ -279,6 +326,8 @@ impl Orchestrator {
                 } else {
                     let dec = run_llm_tool_decision(client, &prompt, request_id, &mut trace).await;
                     llm_latency_ms = dec.llm_latency_ms;
+                    llm_http_ms = dec.llm_http_ms;
+                    llm_parse_ms = dec.llm_parse_ms;
                     llm_response = dec.llm_envelope_raw.clone();
 
                     if dec.transport_error.is_some() {
@@ -335,9 +384,9 @@ impl Orchestrator {
                                 if tasks.is_empty() {
                                     tool_params = None;
                                     tools_proposal = None;
-                                    action_taken = "ambiguous_request".to_string();
+                                    action_taken = crate::llm::NONE_REASON_INVALID.to_string();
                                     category = Some("none".to_string());
-                                    tool_name = Some("ambiguous_request".into());
+                                    tool_name = Some(crate::llm::NONE_REASON_INVALID.into());
                                     new_state = GatewayState::IDLE;
                                     self.last_command_category = None;
                                     self.last_command_name = None;
@@ -362,12 +411,16 @@ impl Orchestrator {
                                         d_status,
                                         d_ms,
                                         d_err,
+                                        d_steps,
+                                        m_steps,
+                                        apply_ms,
                                     ) = self
                                         .apply_tasks(
                                             &tasks,
                                             client,
                                             request_id,
                                             override_active,
+                                            options,
                                             &mut trace,
                                         )
                                         .await;
@@ -378,6 +431,9 @@ impl Orchestrator {
                                     drone_http_status = d_status;
                                     drone_http_ms = d_ms;
                                     drone_error = d_err;
+                                    drone_steps = d_steps;
+                                    model_steps = m_steps;
+                                    apply_total_ms = Some(apply_ms);
                                     pending_approval = false;
 
                                     info!(
@@ -461,10 +517,31 @@ impl Orchestrator {
                 }
 
                 if cat == "drone" {
-                    let r = drone_apply_via_http(client, request_id, name, apply_params, &mut trace)
-                        .await;
+                    let step_id = drone_step_id(request_id, 0);
+                    let r = drone_apply_via_http(
+                        client,
+                        request_id,
+                        &step_id,
+                        name,
+                        apply_params,
+                        options,
+                        &mut trace,
+                    )
+                    .await;
                     drone_http_status = Some(r.http_status);
                     drone_http_ms = Some(r.elapsed_ms);
+                    drone_steps.push(DroneStepTiming {
+                        step_index: 0,
+                        tool: name.to_string(),
+                        step_id,
+                        drone_http_ms: r.elapsed_ms,
+                        dispatch_ms: r.dispatch_ms,
+                        ack_wait_ms: r.ack_wait_ms,
+                        completion_status: r.completion_status.clone(),
+                        ack_result: r.ack_result.clone(),
+                        http_status: r.http_status,
+                        ok: r.mavlink_ok,
+                    });
                     if r.mavlink_ok {
                         trace.push(format!("stage=drone_mavlink_ok tool={name}"));
                         action_taken = format!("drone_http_ok:{} ms={}", name, r.elapsed_ms);
@@ -524,16 +601,31 @@ impl Orchestrator {
 
                     for (idx, tool) in tools.iter().enumerate() {
                         if tool.category == "drone" {
+                            let step_id = drone_step_id(request_id, idx);
                             let r = drone_apply_via_http(
                                 client,
                                 request_id,
+                                &step_id,
                                 &tool.name,
                                 &tool.params,
+                                options,
                                 &mut trace,
                             )
                             .await;
                             drone_http_status = Some(r.http_status);
                             drone_http_ms = Some(r.elapsed_ms);
+                            drone_steps.push(DroneStepTiming {
+                                step_index: idx,
+                                tool: tool.name.clone(),
+                                step_id,
+                                drone_http_ms: r.elapsed_ms,
+                                dispatch_ms: r.dispatch_ms,
+                                ack_wait_ms: r.ack_wait_ms,
+                                completion_status: r.completion_status.clone(),
+                                ack_result: r.ack_result.clone(),
+                                http_status: r.http_status,
+                                ok: r.mavlink_ok,
+                            });
                             if r.mavlink_ok {
                                 last_success = Some(tool.clone());
                                 trace.push(format!(
@@ -692,6 +784,26 @@ impl Orchestrator {
             reason = "command processed"
         );
 
+        let handler_total_ms = latency_ms;
+        let pipeline = handler_timing.map(|h| {
+            let prompt_to_final_ack_ms = if options.wait_for_drone_ack && !drone_steps.is_empty() {
+                Some(latency_ms)
+            } else {
+                None
+            };
+            PipelineTiming {
+                gateway_received_ms: h.gateway_received_ms,
+                gateway_response_ms: Some(unix_ms_now()),
+                queue_wait_ms: h.queue_wait_ms,
+                handler_total_ms,
+                llm_http_ms,
+                llm_parse_ms,
+                apply_total_ms,
+                prompt_to_final_ack_ms,
+                client_dispatch_ms: h.client_dispatch_ms,
+            }
+        });
+
         CommandOutcome {
             latency_ms,
             memory_estimate_mb: fake_memory_mb,
@@ -708,6 +820,12 @@ impl Orchestrator {
             tool_params,
             tools: tools_proposal,
             llm_tool_json,
+            pipeline,
+            drone_steps,
+            model_steps,
+            llm_http_ms,
+            llm_parse_ms,
+            apply_total_ms,
         }
     }
 }
@@ -717,17 +835,23 @@ struct DroneApplyResult {
     elapsed_ms: u64,
     mavlink_ok: bool,
     error_detail: Option<String>,
+    dispatch_ms: Option<u64>,
+    ack_wait_ms: Option<u64>,
+    completion_status: Option<String>,
+    ack_result: Option<String>,
 }
 
 async fn drone_apply_via_http(
     client: &Client,
     request_id: &str,
+    step_id: &str,
     name: &str,
     apply_params: &Option<serde_json::Value>,
+    options: ProcessOptions,
     trace: &mut Vec<String>,
 ) -> DroneApplyResult {
     let url = config::drone_apply_tool_url();
-    trace.push(format!("stage=drone_http_begin tool={name} url={url}"));
+    trace.push(format!("stage=drone_http_begin tool={name} step_id={step_id} url={url}"));
     let t0 = Instant::now();
     let normalized = normalize_drone_tool_params(name, apply_params.clone());
     let params_json = match normalized.as_ref() {
@@ -735,12 +859,26 @@ async fn drone_apply_via_http(
         Some(v) if v.is_object() => v.clone(),
         Some(_) => serde_json::json!({}),
     };
-    let body = serde_json::json!({ "tool": name, "params": params_json });
+    let mut body = serde_json::json!({
+        "tool": name,
+        "params": params_json,
+        "step_id": step_id,
+    });
+    if options.wait_for_drone_ack {
+        body["wait_for"] = serde_json::json!("ack");
+        body["ack_timeout_ms"] = serde_json::json!(options.ack_timeout_ms);
+    }
     let send_result = client
         .post(&url)
         .header("x-request-id", request_id)
         .json(&body)
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(
+            if options.wait_for_drone_ack {
+                30 + options.ack_timeout_ms / 1000
+            } else {
+                30
+            },
+        ))
         .send()
         .await;
     let elapsed_ms = t0.elapsed().as_millis() as u64;
@@ -760,12 +898,26 @@ async fn drone_apply_via_http(
             match parsed {
                 Ok(v) => {
                     let ok = v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
+                    let dispatch_ms = v.get("dispatch_ms").and_then(|x| x.as_u64());
+                    let ack_wait_ms = v.get("ack_wait_ms").and_then(|x| x.as_u64());
+                    let completion_status = v
+                        .get("completion_status")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string);
+                    let ack_result = v
+                        .get("ack_result")
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string);
                     if ok {
                         DroneApplyResult {
                             http_status: status_code,
                             elapsed_ms,
                             mavlink_ok: true,
                             error_detail: None,
+                            dispatch_ms,
+                            ack_wait_ms,
+                            completion_status,
+                            ack_result,
                         }
                     } else {
                         let err = v
@@ -781,6 +933,10 @@ async fn drone_apply_via_http(
                                 "drone_server_http={} error={}",
                                 status_code, err
                             )),
+                            dispatch_ms,
+                            ack_wait_ms,
+                            completion_status,
+                            ack_result,
                         }
                     }
                 }
@@ -793,6 +949,10 @@ async fn drone_apply_via_http(
                         status_code,
                         body_text.chars().take(200).collect::<String>()
                     )),
+                    dispatch_ms: None,
+                    ack_wait_ms: None,
+                    completion_status: None,
+                    ack_result: None,
                 },
             }
         }
@@ -801,6 +961,10 @@ async fn drone_apply_via_http(
             elapsed_ms,
             mavlink_ok: false,
             error_detail: Some(format!("drone_http_transport: {e}")),
+            dispatch_ms: None,
+            ack_wait_ms: None,
+            completion_status: None,
+            ack_result: None,
         },
     }
 }
