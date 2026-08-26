@@ -33,6 +33,21 @@ pub struct PipelineTiming {
     pub prompt_to_final_ack_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_dispatch_ms: Option<u64>,
+    /// LLM HTTP + tool JSON parse (`llm_http_ms` + `llm_parse_ms`).
+    #[serde(default)]
+    pub llm_ms: u64,
+    /// Sum of `drone_steps[].drone_http_ms` (gateway ↔ drone-http round trips).
+    #[serde(default)]
+    pub drone_server_ms: u64,
+    /// Sum of `drone_steps[].ack_wait_ms` when drone-http reports FC ACK wait.
+    #[serde(default)]
+    pub drone_ack_wait_ms: u64,
+    /// Sum of model-step time (placeholders today; Drone_LLM HTTP when wired).
+    #[serde(default)]
+    pub model_server_ms: u64,
+    /// Gateway orchestration residual: handler_total − queue − llm − drone − model.
+    #[serde(default)]
+    pub gateway_ms: u64,
 }
 
 #[derive(serde::Serialize, Debug, Clone)]
@@ -57,7 +72,14 @@ pub struct DroneStepTiming {
 pub struct ModelStepTiming {
     pub step_index: usize,
     pub tool: String,
+    #[serde(default)]
     pub placeholder: bool,
+    #[serde(default)]
+    pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inference_ms: Option<u64>,
+    pub http_status: u16,
+    pub ok: bool,
 }
 
 /// Per-request options for orchestrator (infer / eval E2E).

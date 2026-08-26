@@ -2,7 +2,8 @@ use crate::config;
 use crate::drone_params::{normalize_drone_tasks, normalize_drone_tool_params, tasks_display_json};
 use crate::llm::{normalize_none_reason, LlmToolPayload};
 use crate::llm_decision::run_llm_tool_decision;
-use crate::timing::{drone_step_id, unix_ms_now};
+use crate::model_apply::model_apply_via_http;
+use crate::timing::{drone_step_id, finalize_pipeline_layers, unix_ms_now};
 use crate::types::{
     CommandOutcome, DroneStepTiming, GatewayCommand, GatewayState, HandlerTimingInput,
     ModelStepTiming, PipelineTiming, ProcessOptions, ToolCall,
@@ -66,7 +67,7 @@ impl Orchestrator {
             );
             msg
         } else if tool.category == "model" {
-            let msg = format!("Python worker will activate: {}", tool.name);
+            let msg = format!("Model server: {}", tool.name);
             info!(
                 action = "model_tool_selected",
                 state = ?self.current_state,
@@ -175,28 +176,63 @@ impl Orchestrator {
                     trace.push(format!("stage=sequence_stopped idx={idx}"));
                     break;
                 }
-            } else if tool.category == "model" {
+        } else if tool.category == "model" {
                 let (maybe_model, act, _c, _n) = self.handle_tool_call(tool.clone(), override_active);
                 if let Some(m) = maybe_model {
                     self.current_model = Some(m);
                 }
-                trace.push(format!(
-                    "stage=sequence_model_step idx={} action={}",
-                    idx, act
-                ));
-                info!(
-                    action = "apply_sequence_model_step",
-                    request_id = %request_id,
-                    step = idx,
-                    tool_name = %tool.name,
-                    reason = "model path (Drone_LLM) not wired yet"
-                );
-                model_steps.push(ModelStepTiming {
-                    step_index: idx,
-                    tool: tool.name.clone(),
-                    placeholder: true,
-                });
-                last_success = Some(tool.clone());
+                if override_active {
+                    trace.push(format!(
+                        "stage=sequence_model_step idx={} action={} skipped=override",
+                        idx, act
+                    ));
+                    model_steps.push(ModelStepTiming {
+                        step_index: idx,
+                        tool: tool.name.clone(),
+                        placeholder: true,
+                        elapsed_ms: 0,
+                        inference_ms: None,
+                        http_status: 0,
+                        ok: true,
+                    });
+                    last_success = Some(tool.clone());
+                } else {
+                    let r = model_apply_via_http(client, request_id, &tool.name, trace).await;
+                    model_steps.push(ModelStepTiming {
+                        step_index: idx,
+                        tool: tool.name.clone(),
+                        placeholder: false,
+                        elapsed_ms: r.elapsed_ms,
+                        inference_ms: r.inference_ms,
+                        http_status: r.http_status,
+                        ok: r.ok,
+                    });
+                    if r.ok {
+                        last_success = Some(tool.clone());
+                        trace.push(format!(
+                            "stage=sequence_step_ok idx={} tool={} ms={}",
+                            idx, tool.name, r.elapsed_ms
+                        ));
+                        info!(
+                            action = "apply_sequence_model_step",
+                            request_id = %request_id,
+                            step = idx,
+                            tool_name = %tool.name,
+                            elapsed_ms = r.elapsed_ms,
+                            inference_ms = ?r.inference_ms,
+                            skipped = r.skipped,
+                            reason = "model server /tool"
+                        );
+                    } else {
+                        let err = r
+                            .error_detail
+                            .unwrap_or_else(|| "model step failed".to_string());
+                        drone_error = Some(format!("model_server_http={} error={err}", r.http_status));
+                        stopped_at = Some(idx);
+                        trace.push(format!("stage=sequence_stopped idx={idx} model"));
+                        break;
+                    }
+                }
             } else {
                 trace.push(format!(
                     "stage=sequence_skip_unknown_category idx={} cat={}",
@@ -223,7 +259,7 @@ impl Orchestrator {
             if t.category == "drone" {
                 format!("drone_http_ok:{}", t.name)
             } else {
-                format!("model_tool_applied:{}", t.name)
+                format!("model_http_ok:{}", t.name)
             }
         } else {
             format!("sequence_ok:{}_steps", tools.len())
@@ -507,13 +543,34 @@ impl Orchestrator {
                 new_state = GatewayState::ACTIVE;
 
                 if cat == "model" {
-                    trace.push("stage=model_apply_placeholder".into());
-                    info!(
-                        action = "apply_tool_send_to_python",
-                        request_id = %request_id,
-                        tool_name = %name,
-                        reason = "user accepted; model path (Drone_LLM) not wired yet"
-                    );
+                    if override_active {
+                        trace.push("stage=model_apply_skipped_override".into());
+                    } else {
+                        let r = model_apply_via_http(client, request_id, name, &mut trace).await;
+                        model_steps.push(ModelStepTiming {
+                            step_index: 0,
+                            tool: name.to_string(),
+                            placeholder: false,
+                            elapsed_ms: r.elapsed_ms,
+                            inference_ms: r.inference_ms,
+                            http_status: r.http_status,
+                            ok: r.ok,
+                        });
+                        if r.ok {
+                            action_taken = format!("model_http_ok:{} ms={}", name, r.elapsed_ms);
+                            trace.push(format!("stage=model_http_ok tool={name}"));
+                        } else {
+                            let err = r
+                                .error_detail
+                                .unwrap_or_else(|| "unknown model error".to_string());
+                            drone_error = Some(format!(
+                                "model_server_http={} error={err}",
+                                r.http_status
+                            ));
+                            action_taken = format!("model_http_failed:{name}");
+                            trace.push(format!("stage=model_http_failed {err}"));
+                        }
+                    }
                 }
 
                 if cat == "drone" {
@@ -646,23 +703,66 @@ impl Orchestrator {
                                 break;
                             }
                         } else if tool.category == "model" {
-                            let (maybe_model, act, _c, _n) =
-                                self.handle_tool_call(tool.clone(), override_active);
-                            if let Some(m) = maybe_model {
-                                self.current_model = Some(m);
+                            if override_active {
+                                let (maybe_model, act, _c, _n) =
+                                    self.handle_tool_call(tool.clone(), override_active);
+                                if let Some(m) = maybe_model {
+                                    self.current_model = Some(m);
+                                }
+                                trace.push(format!(
+                                    "stage=sequence_model_step idx={} action={} skipped=override",
+                                    idx, act
+                                ));
+                                model_steps.push(ModelStepTiming {
+                                    step_index: idx,
+                                    tool: tool.name.clone(),
+                                    placeholder: true,
+                                    elapsed_ms: 0,
+                                    inference_ms: None,
+                                    http_status: 0,
+                                    ok: true,
+                                });
+                                last_success = Some(tool.clone());
+                            } else {
+                                let r = model_apply_via_http(
+                                    client,
+                                    request_id,
+                                    &tool.name,
+                                    &mut trace,
+                                )
+                                .await;
+                                model_steps.push(ModelStepTiming {
+                                    step_index: idx,
+                                    tool: tool.name.clone(),
+                                    placeholder: false,
+                                    elapsed_ms: r.elapsed_ms,
+                                    inference_ms: r.inference_ms,
+                                    http_status: r.http_status,
+                                    ok: r.ok,
+                                });
+                                if r.ok {
+                                    last_success = Some(tool.clone());
+                                    trace.push(format!(
+                                        "stage=sequence_step_ok idx={} tool={}",
+                                        idx, tool.name
+                                    ));
+                                } else {
+                                    let err = r.error_detail.unwrap_or_else(|| {
+                                        "model step failed without error detail".to_string()
+                                    });
+                                    drone_error = Some(format!(
+                                        "model_server_http={} error={err}",
+                                        r.http_status
+                                    ));
+                                    stopped_at = Some(idx);
+                                    action_taken = format!(
+                                        "sequence_stopped_at_step_{idx}_tool_{}",
+                                        tool.name
+                                    );
+                                    trace.push(format!("stage=sequence_stopped idx={idx}"));
+                                    break;
+                                }
                             }
-                            trace.push(format!(
-                                "stage=sequence_model_step idx={} action={}",
-                                idx, act
-                            ));
-                            info!(
-                                action = "apply_sequence_model_step",
-                                request_id = %request_id,
-                                step = idx,
-                                tool_name = %tool.name,
-                                reason = "model path (Drone_LLM) not wired yet"
-                            );
-                            last_success = Some(tool.clone());
                         } else {
                             trace.push(format!(
                                 "stage=sequence_skip_unknown_category idx={} cat={}",
@@ -791,7 +891,7 @@ impl Orchestrator {
             } else {
                 None
             };
-            PipelineTiming {
+            let mut p = PipelineTiming {
                 gateway_received_ms: h.gateway_received_ms,
                 gateway_response_ms: Some(unix_ms_now()),
                 queue_wait_ms: h.queue_wait_ms,
@@ -801,8 +901,37 @@ impl Orchestrator {
                 apply_total_ms,
                 prompt_to_final_ack_ms,
                 client_dispatch_ms: h.client_dispatch_ms,
-            }
+                llm_ms: 0,
+                drone_server_ms: 0,
+                drone_ack_wait_ms: 0,
+                model_server_ms: 0,
+                gateway_ms: 0,
+            };
+            finalize_pipeline_layers(&mut p, &drone_steps, &model_steps);
+            p
         });
+
+        // Structured latency line for log aggregation (see benchmark/run_latency_batch.py).
+        let llm_ms = llm_http_ms.saturating_add(llm_parse_ms);
+        let tool_ms = apply_total_ms.unwrap_or(0);
+        let drone_server_ms = pipeline.as_ref().map(|p| p.drone_server_ms).unwrap_or(0);
+        let model_server_ms = pipeline.as_ref().map(|p| p.model_server_ms).unwrap_or(0);
+        let gateway_ms = pipeline.as_ref().map(|p| p.gateway_ms).unwrap_or(0);
+        info!(
+            action = "query_latency",
+            request_id = %request_id,
+            llm_ms,
+            tool_ms,
+            drone_server_ms,
+            model_server_ms,
+            gateway_ms,
+            queue_wait_ms = pipeline.as_ref().map(|p| p.queue_wait_ms).unwrap_or(0),
+            total_ms = handler_total_ms,
+            drone_steps = drone_steps.len(),
+            model_steps = model_steps.len(),
+            success = drone_error.is_none(),
+            action_taken = %action_taken,
+        );
 
         CommandOutcome {
             latency_ms,

@@ -9,6 +9,7 @@ mod infer_log;
 mod logs_ws;
 mod llm;
 mod llm_decision;
+mod model_apply;
 mod mcp_proxy;
 mod timing;
 mod types;

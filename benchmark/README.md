@@ -1,5 +1,25 @@
 # LLM edge benchmark (`/eval` and `/eval/e2e`)
 
+## Latency batch (`POST /infer`)
+
+For tonight’s 15–20 query runs (or the full case set later), use **`run_latency_batch.py`** against the **production** infer path — no `eval` feature required.
+
+```bash
+cd gateway/benchmark
+python3 run_latency_batch.py --gateway http://127.0.0.1:3000
+python3 run_latency_batch.py --file latency_queries.txt --repeats 2 --wait-ack --out latency_runs/tonight
+# Scale up: --release bench_v1   or   --file llm_edge_test_cases_100.txt
+```
+
+Each run logs per-query `llm_ms`, `tool_ms`, `total_ms` (from gateway `pipeline`) plus client wall time. Outputs:
+
+- **`latency_results.csv`** — raw rows (expand to 150+ cases by changing `--file` / `--release`)
+- **Summary table** — mean / median / P95 overall and by category (`simple`, `multi-step`, `reject`)
+
+Edit **`latency_queries.txt`** (`category|prompt` per line) for your test set. Gateway also emits structured `action=query_latency` log lines for aggregation.
+
+---
+
 LLM decisions are driven by **`SAR_SYSTEM_PROMPT`** in [`../src/llm.rs`](../src/llm.rs) (example-first `{"tasks":[...]}` router, max 5 steps). Case **Expected output** must match that contract (`invalid_request` for no-op).
 
 Two modes:
@@ -37,6 +57,20 @@ Two modes:
 
    Separate blocks with a **blank line** (or a line of `---`).
 
+## Standard release: `bench_v1`
+
+Stratified **100** cases (20 × invalid, single model, single drone, multi short, multi long). See [`releases/bench_v1/README.md`](releases/bench_v1/README.md).
+
+```bash
+python3 build_bench_v1.py   # regenerate cases.txt + manifest.json from legacy pool
+python3 run_eval.py \
+  --release bench_v1 \
+  --gateway http://127.0.0.1:3000 \
+  --out results/bench_v1_run_001
+```
+
+Legacy unstratified pool: `llm_edge_test_cases_100.txt`.
+
 ## Run
 
 From this directory:
@@ -64,6 +98,8 @@ Options:
 
 | Flag | Meaning |
 |------|---------|
+| `--release` | Use `releases/<id>/cases.txt` (e.g. `bench_v1`) |
+| `--file` | Explicit case file (required if `--release` omitted) |
 | `--mode` | `decision` (default) or `e2e` |
 | `--sitl-token` | Required for `e2e` (must match gateway `EVAL_SITL_TOKEN`) |
 | `--ack-timeout-ms` | FC ACK wait per drone step in e2e mode (default 3000) |

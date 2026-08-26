@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from parse_cases import load_cases
+from classify_case import classify_case
 from tegra_sampler import TegraSuiteLog, summarize_log_file, tegra_snapshot, tegrastats_available
 
 
@@ -106,6 +107,53 @@ def _params_match(
     return True
 
 
+def _load_manifest(case_file: Path) -> dict[str, Any] | None:
+    """If cases live under releases/<id>/, load manifest.json for category labels."""
+    parent = case_file.parent
+    manifest_path = parent / "manifest.json"
+    if manifest_path.is_file():
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    return None
+
+
+def _category_for_case(
+    case_index: int, expected: dict[str, Any], manifest: dict[str, Any] | None
+) -> str:
+    if manifest and "cases" in manifest:
+        for entry in manifest["cases"]:
+            if entry.get("index") == case_index:
+                return str(entry.get("category", "unknown"))
+    return classify_case(expected)
+
+
+def _by_category_summary(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        cat = r.get("category") or "unknown"
+        buckets.setdefault(cat, []).append(r)
+
+    out: dict[str, dict[str, Any]] = {}
+    for cat, rs in sorted(buckets.items()):
+        n = len(rs)
+        full = sum(
+            1
+            for r in rs
+            if r.get("json_valid")
+            and r.get("intent_match_effective")
+            and r.get("params_match_effective")
+        )
+        out[cat] = {
+            "cases": n,
+            "full_match_rate": full / n if n else 0.0,
+            "json_valid_rate": sum(1 for r in rs if r.get("json_valid")) / n if n else 0.0,
+            "intent_effective_rate": sum(1 for r in rs if r.get("intent_match_effective"))
+            / n
+            if n
+            else 0.0,
+        }
+    return out
+
+
 def _percentile(sorted_vals: list[float], p: float) -> float:
     if not sorted_vals:
         return 0.0
@@ -120,7 +168,12 @@ def _percentile(sorted_vals: list[float], p: float) -> float:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Benchmark gateway /eval against a case file")
-    ap.add_argument("--file", required=True, help="Path to llm_edge_test_cases_100.txt")
+    ap.add_argument("--file", help="Path to case file (Input:/Expected output: blocks)")
+    ap.add_argument(
+        "--release",
+        default="",
+        help="Shortcut: releases/<id>/cases.txt (e.g. bench_v1)",
+    )
     ap.add_argument("--gateway", default="http://127.0.0.1:3000", help="Gateway base URL")
     ap.add_argument("--out", required=True, help="Output directory for results")
     ap.add_argument("--limit", type=int, default=0, help="Max cases (0 = all)")
@@ -140,6 +193,22 @@ def main() -> int:
     ap.add_argument("--ack-timeout-ms", type=int, default=3000, help="E2E ACK timeout")
     args = ap.parse_args()
 
+    bench_root = Path(__file__).resolve().parent
+    if args.release:
+        case_file = bench_root / "releases" / args.release / "cases.txt"
+    elif args.file:
+        case_file = Path(args.file)
+    else:
+        print("error: provide --file or --release", file=sys.stderr)
+        return 2
+
+    if not case_file.is_file():
+        print(f"error: case file not found: {case_file}", file=sys.stderr)
+        return 2
+
+    manifest = _load_manifest(case_file)
+    bench_id = manifest.get("id") if manifest else None
+
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     base = args.gateway.rstrip("/")
@@ -149,7 +218,7 @@ def main() -> int:
         print("error: --mode e2e requires --sitl-token (gateway EVAL_SITL_TOKEN)", file=sys.stderr)
         return 2
 
-    cases = load_cases(args.file)
+    cases = load_cases(case_file)
     if args.limit and args.limit > 0:
         cases = cases[: args.limit]
 
@@ -172,6 +241,7 @@ def main() -> int:
     with jsonl_path.open("w", encoding="utf-8") as jf:
         for c in cases:
             exp_tasks = c.expected["tasks"]
+            category = _category_for_case(c.index, c.expected, manifest)
             t0 = time.perf_counter()
             tegra_before = tegra_snapshot() if args.tegra and tegrastats_available() else None
             try:
@@ -192,6 +262,7 @@ def main() -> int:
             except Exception as e:
                 row = {
                     "case_index": c.index,
+                    "category": category,
                     "input": c.input_text,
                     "expected": c.expected,
                     "error": str(e),
@@ -223,6 +294,7 @@ def main() -> int:
 
             row = {
                 "case_index": c.index,
+                "category": category,
                 "input": c.input_text,
                 "expected": c.expected,
                 "mode": args.mode,
@@ -307,8 +379,10 @@ def main() -> int:
 
     summary = {
         "cases": n,
+        "benchmark_id": bench_id,
         "mode": args.mode,
         "eval_url": eval_url,
+        "case_file": str(case_file),
         "json_valid_rate": n_json / n if n else 0.0,
         "intent_strict_rate": n_is / n if n else 0.0,
         "intent_effective_rate": n_ie / n if n else 0.0,
@@ -321,6 +395,7 @@ def main() -> int:
         "e2e_handler_ms": lat_stats(handler_ms),
         "prompt_to_final_ack_ms": lat_stats(pipeline_ack),
         "e2e_client_ms": lat_stats([float(r["e2e_client_ms"]) for r in rows if "e2e_client_ms" in r]),
+        "by_category": _by_category_summary(rows),
         "tegra_suite": tegra_summary,
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")

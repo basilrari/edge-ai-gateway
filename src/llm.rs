@@ -17,7 +17,7 @@ Format (always use this):
 Rules:
 - Steps run in order. At most 5 tasks per reply.
 - No action → {"tasks":[{"category":"none","name":"invalid_request"}]}
-- Never invent tool names, coordinates, altitude, or waypoint index.
+- Never invent tool names, coordinates, altitude, or waypoint index. User-given lat/lon without height: arm, takeoff, goto_location with lat_deg, lon_deg; omit alt_m or use 15 (gateway default above home).
 - goto_location params must use lat_deg, lon_deg, alt_m (alt_m = meters above home). Never use lat, lon, long.
 - mission_set_current requires params: {"seq": number} (0-based).
 - takeoff only after arm for launch. Do not add set_mode_guided before arm for takeoff or goto.
@@ -61,6 +61,9 @@ User: flood segmentation
 {"tasks":[{"category":"model","name":"flood_seg"}]}
 
 User: classify the flood
+{"tasks":[{"category":"model","name":"flood_class"}]}
+
+User: classify the image
 {"tasks":[{"category":"model","name":"flood_class"}]}
 
 User: arm the drone
@@ -118,7 +121,7 @@ User: fly to 37.12, -122.1 at 30m then detect people
 {"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff","params":{"altitude_m":30}},{"category":"drone","name":"goto_location","params":{"lat_deg":37.12,"lon_deg":-122.1,"alt_m":30}},{"category":"model","name":"human_detect"}]}
 
 User: fly to 23.56, 120.47
-{"tasks":[{"category":"none","name":"invalid_request"}]}
+{"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff"},{"category":"drone","name":"goto_location","params":{"lat_deg":23.56,"lon_deg":120.47,"alt_m":15}}]}
 
 User: take off and start the mission
 {"tasks":[{"category":"none","name":"invalid_request"}]}

@@ -117,6 +117,11 @@ pub fn model_server_base_url() -> String {
     std::env::var("MODEL_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string())
 }
 
+pub fn model_apply_tool_url() -> String {
+    let base = model_server_base_url().trim_end_matches('/').to_string();
+    format!("{base}/tool")
+}
+
 /// Camera / WebRTC signaling on Drone_LLM (defaults to model server URL).
 pub fn camera_server_base_url() -> String {
     std::env::var("CAMERA_SERVER_URL")

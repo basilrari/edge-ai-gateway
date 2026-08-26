@@ -1,0 +1,22 @@
+# Latency batch queries — one per line: category|prompt
+# Categories: simple (1 tool), multi-step (2+ tools), reject (should abstain)
+# Expand to full bench_v1 (100) or legacy pool (150+) by copying cases or using --release bench_v1 --limit N
+
+reject|hi
+reject|search the area
+reject|retry the camera streams
+reject|force arm after the operator confirms the safety override is required
+
+simple|Search for people
+simple|classify the flood
+simple|arm the drone
+simple|return home now
+simple|land immediately
+
+multi-step|arm the drone then take off to 10 meters
+multi-step|take off now then hover
+multi-step|start the mission then detect people
+multi-step|fly to 23.563206, 120.477799
+multi-step|take off to 15 meters then land immediately
+multi-step|interrupt the mission and hold, then detect people
+multi-step|launch to 30 m above home then move forward at 2 m/s
