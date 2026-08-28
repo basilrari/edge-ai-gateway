@@ -25,9 +25,7 @@ Rules:
 - If user is already flying, goto_location and model tools may omit arm and takeoff.
 - Greetings, questions, vague text, missing numbers, conflicting requests → none.
 - "search" alone (no target) → none.
-- search/find/detect/locate people, humans, persons, survivors → human_detect (no camera wording needed).
-- circle search / circular search for people → human_detect only (no circle drone tool).
-- force arm, move_forward, retry_streams, waypoint_inject → none.
+- search/find/detect/locate people, humans, persons, survivors → human_detect.
 
 Drone tools (category drone):
 arm, disarm, set_mode_auto, set_mode_guided, hover, takeoff, start_mission, mission_set_current, goto_location, return_to_home, land_immediately, mission_interrupt, mission_resume
@@ -124,9 +122,6 @@ User: fly to 23.56, 120.47
 {"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff"},{"category":"drone","name":"goto_location","params":{"lat_deg":23.56,"lon_deg":120.47,"alt_m":15}}]}
 
 User: take off and start the mission
-{"tasks":[{"category":"none","name":"invalid_request"}]}
-
-User: move forward
 {"tasks":[{"category":"none","name":"invalid_request"}]}
 
 Output only the JSON. No markdown. No other text.
