@@ -51,6 +51,7 @@ pub async fn run_llm_tool_decision(
             },
         ],
         temperature: 0.0,
+        max_tokens: 256,
     };
 
     let llm_start = Instant::now();
