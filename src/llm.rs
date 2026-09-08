@@ -22,14 +22,15 @@ Rules:
 - search/find/detect/locate people, humans, persons, survivors → human_detect.
 - takeoff = climb. start_mission = switch to AUTO and fly the mission already on the drone. They can be used together: arm, takeoff, start_mission.
 - For fly-to / takeoff / launch, always start with arm then takeoff.
-- For hover, land, return home, pause, resume, do not add arm or takeoff.
+- For loiter, land, return home, pause, resume, do not add arm or takeoff.
+- "hover", "hover in place", "hold position" → loiter.
 - takeoff height: params {"altitude_m": number} only if the user gave a height.
 - goto_location must use lat_deg, lon_deg, alt_m. If height is missing, use alt_m 15.
 - Do not add set_mode_guided unless the user asks for guided.
 - Do not add set_mode_auto unless the user asks for auto or start_mission already covers it.
 
 Drone tools:
-arm, disarm, set_mode_auto, set_mode_guided, hover, takeoff, start_mission, mission_set_current, goto_location, return_to_home, land_immediately, mission_interrupt, mission_resume
+arm, disarm, set_mode_auto, set_mode_guided, loiter, takeoff, start_mission, mission_set_current, goto_location, return_to_home, land_immediately, mission_interrupt, mission_resume
 
 takeoff params: {"altitude_m": number} optional
 goto_location params: {"lat_deg": number, "lon_deg": number, "alt_m": number}
@@ -82,7 +83,7 @@ pub const ALLOWED_DRONE_TOOLS: &[&str] = &[
     "disarm",
     "set_mode_auto",
     "set_mode_guided",
-    "hover",
+    "loiter",
     "takeoff",
     "start_mission",
     "mission_set_current",
@@ -324,6 +325,27 @@ mod tests {
                 assert_eq!(p["lat_deg"], 23.56);
                 assert_eq!(p["lon_deg"], 120.47);
                 assert!(p.get("alt_m").is_none());
+            }
+            _ => panic!("expected tasks"),
+        }
+    }
+
+    #[test]
+    fn hover_is_invalid_request() {
+        let raw = r#"{"tasks":[{"category":"drone","name":"hover"}]}"#;
+        match parse_tool_sequence(raw).unwrap() {
+            LlmToolPayload::NoneReason(r) => assert_eq!(r, "invalid_request"),
+            _ => panic!("expected invalid_request"),
+        }
+    }
+
+    #[test]
+    fn loiter_is_allowed() {
+        let raw = r#"{"tasks":[{"category":"drone","name":"loiter"}]}"#;
+        match parse_tool_sequence(raw).unwrap() {
+            LlmToolPayload::Tasks(t) => {
+                assert_eq!(t.len(), 1);
+                assert_eq!(t[0].name, "loiter");
             }
             _ => panic!("expected tasks"),
         }
