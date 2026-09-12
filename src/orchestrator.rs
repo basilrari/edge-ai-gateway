@@ -376,7 +376,6 @@ impl Orchestrator {
                             error = %e,
                             reason = "HTTP request to LLM failed"
                         );
-                        new_state = GatewayState::IDLE;
                         action_taken = "llm_http_failed_fallback_text".to_string();
                     } else if dec.chat_parse_error.is_some() {
                         let e = dec.chat_parse_error.as_deref().unwrap_or("");
@@ -388,7 +387,6 @@ impl Orchestrator {
                             error = %e,
                             reason = "failed to parse LLM envelope"
                         );
-                        new_state = GatewayState::IDLE;
                         action_taken = "llm_parse_failed_fallback_text".to_string();
                     } else if let Some(tool_res) = dec.tool_payload {
                         let status = dec.http_status.unwrap_or(0);
@@ -501,7 +499,6 @@ impl Orchestrator {
                                 category = Some("none".to_string());
                                 tool_name = Some("tool_parse_failed".into());
                                 action_taken = format!("tool_parse_failed: {e}");
-                                new_state = GatewayState::IDLE;
                                 self.last_command_category = None;
                                 self.last_command_name = None;
                             }
@@ -530,7 +527,6 @@ impl Orchestrator {
                         drone_error = Some(format!("tool_not_allowed:{name}"));
                         category = Some(cat.clone());
                         tool_name = Some(name.clone());
-                        new_state = GatewayState::IDLE;
                         trace.push(format!(
                             "stage=apply_tool_rejected name={name} reason={reason}"
                         ));
@@ -667,7 +663,6 @@ impl Orchestrator {
                         LlmToolPayload::NoneReason(reason) => {
                             action_taken = format!("tool_rejected:{reason}");
                             drone_error = Some(format!("tool_not_allowed:{reason}"));
-                            new_state = GatewayState::IDLE;
                             trace.push(format!(
                                 "stage=apply_sequence_rejected reason={reason}"
                             ));
@@ -1028,7 +1023,9 @@ async fn drone_apply_via_http(
     }
     let mut req = client.post(&url).header("x-request-id", request_id);
     if let Some(key) = config::mcp_api_key() {
-        req = req.header("x-api-key", key);
+        req = req
+            .header("authorization", format!("Bearer {key}"))
+            .header("x-api-key", key);
     }
     let send_result = req
         .json(&body)
@@ -1126,5 +1123,89 @@ async fn drone_apply_via_http(
             completion_status: None,
             ack_result: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod apply_tool_reject_tests {
+    use super::*;
+    use crate::types::{GatewayCommand, GatewayState, ProcessOptions, ToolCall};
+    use std::time::{Duration, Instant};
+
+    fn no_http_wait() -> ProcessOptions {
+        ProcessOptions {
+            wait_for_drone_ack: false,
+            ack_timeout_ms: 50,
+        }
+    }
+
+    fn override_orch() -> Orchestrator {
+        let mut orch = Orchestrator::new();
+        orch.current_state = GatewayState::OVERRIDE_ACTIVE;
+        orch.override_until = Some(Instant::now() + Duration::from_secs(60));
+        orch
+    }
+
+    fn fast_client() -> Client {
+        Client::builder()
+            .timeout(Duration::from_millis(200))
+            .build()
+            .expect("client")
+    }
+
+    #[tokio::test]
+    async fn apply_tool_force_arm_rejected_before_dispatch() {
+        let mut orch = override_orch();
+        let outcome = orch
+            .process_command(
+                GatewayCommand::ApplyTool {
+                    category: "drone".into(),
+                    tool_name: "force_arm".into(),
+                    params: None,
+                },
+                &fast_client(),
+                "test-force-arm",
+                None,
+                no_http_wait(),
+            )
+            .await;
+        assert_eq!(outcome.action_taken, "tool_rejected:invalid_request");
+        assert!(outcome.drone_steps.is_empty());
+        assert!(outcome.model_steps.is_empty());
+        assert!(outcome.drone_http_status.is_none());
+        assert_eq!(orch.current_state, GatewayState::OVERRIDE_ACTIVE);
+        assert!(
+            outcome.latency_ms < 1000,
+            "reject must not wait on HTTP: {} ms",
+            outcome.latency_ms
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_sequence_unknown_name_rejected_before_dispatch() {
+        let mut orch = override_orch();
+        let outcome = orch
+            .process_command(
+                GatewayCommand::ApplyToolSequence {
+                    tools: vec![ToolCall {
+                        category: "drone".into(),
+                        name: "do_a_barrel_roll".into(),
+                        params: None,
+                    }],
+                },
+                &fast_client(),
+                "test-seq-unknown",
+                None,
+                no_http_wait(),
+            )
+            .await;
+        assert_eq!(outcome.action_taken, "tool_rejected:invalid_request");
+        assert!(outcome.drone_steps.is_empty());
+        assert_eq!(orch.current_state, GatewayState::OVERRIDE_ACTIVE);
+        assert!(
+            outcome.latency_ms < 1000,
+            "reject must not wait on HTTP: {} ms",
+            outcome.latency_ms
+        );
     }
 }

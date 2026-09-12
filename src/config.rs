@@ -153,11 +153,11 @@ pub fn listen_addr() -> std::net::SocketAddr {
         .unwrap_or_else(|| "127.0.0.1:3000".parse().expect("default GATEWAY_BIND"))
 }
 
-/// `None` (unset) → wait for ACK. Explicit `0` / `false` disables.
+/// `None` / empty → wait for ACK. Explicit `0` / `false` disables; any other value stays on.
 pub fn ack_env_enabled(val: Option<&str>) -> bool {
-    match val {
-        None => true,
-        Some(v) => v == "1" || v.eq_ignore_ascii_case("true"),
+    match val.map(str::trim) {
+        None | Some("") => true,
+        Some(v) => !(v == "0" || v.eq_ignore_ascii_case("false")),
     }
 }
 
@@ -173,10 +173,15 @@ mod tests {
     #[test]
     fn ack_default_on_when_unset() {
         assert!(ack_env_enabled(None));
+        assert!(ack_env_enabled(Some("")));
+        assert!(ack_env_enabled(Some("  ")));
         assert!(ack_env_enabled(Some("true")));
         assert!(ack_env_enabled(Some("1")));
+        assert!(ack_env_enabled(Some("yes")));
+        assert!(ack_env_enabled(Some("ture")));
         assert!(!ack_env_enabled(Some("false")));
         assert!(!ack_env_enabled(Some("0")));
+        assert!(!ack_env_enabled(Some(" FALSE ")));
     }
 }
 

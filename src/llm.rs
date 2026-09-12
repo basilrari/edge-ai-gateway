@@ -303,19 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_tool_force_arm_rejected() {
-        let tools = vec![ToolCall {
-            category: "drone".into(),
-            name: "force_arm".into(),
-            params: None,
-        }];
-        match validate_llm_tasks(tools) {
-            LlmToolPayload::NoneReason(r) => assert_eq!(r, "invalid_request"),
-            _ => panic!("expected invalid_request"),
-        }
-    }
-
-    #[test]
     fn valid_human_detect_still_works() {
         let raw = r#"{"tasks":[{"category":"model","name":"human_detect"}]}"#;
         match parse_tool_sequence(raw).unwrap() {
