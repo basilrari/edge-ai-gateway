@@ -115,11 +115,11 @@ impl Orchestrator {
         tools: &[ToolCall],
         client: &Client,
         request_id: &str,
-        override_active: bool,
         options: ProcessOptions,
         command: &'static str,
         trace: &mut Vec<String>,
     ) -> ApplyOutcome {
+        let override_active = self.override_is_live();
         let apply_start = Instant::now();
         let new_state = GatewayState::ACTIVE;
         let mut last_success: Option<ToolCall> = None;
@@ -267,7 +267,7 @@ impl Orchestrator {
                 request_id = %request_id,
                 stopped_at = idx,
                 stopped_category,
-                reason = %format!("sequence stopped on first {stopped_category} step failure")
+                reason = "sequence stopped on first failed step"
             );
         } else {
             info!(
@@ -415,7 +415,6 @@ impl Orchestrator {
                                         &tasks,
                                         client,
                                         request_id,
-                                        override_active,
                                         options,
                                         "infer",
                                         &mut trace,
@@ -481,13 +480,11 @@ impl Orchestrator {
                         ));
                     }
                     LlmToolPayload::Tasks(tasks) => {
-                        let override_active = self.override_is_live();
                         applied = Some(
                             self.apply_tasks(
                                 &tasks,
                                 client,
                                 request_id,
-                                override_active,
                                 options,
                                 "apply_tool",
                                 &mut trace,
@@ -516,13 +513,11 @@ impl Orchestrator {
                             trace.push(format!("stage=apply_sequence_rejected reason={reason}"));
                         }
                         LlmToolPayload::Tasks(tools) => {
-                            let override_active = self.override_is_live();
                             applied = Some(
                                 self.apply_tasks(
                                     &tools,
                                     client,
                                     request_id,
-                                    override_active,
                                     options,
                                     "apply_tool_sequence",
                                     &mut trace,
@@ -726,9 +721,7 @@ async fn drone_apply_via_http(
     trace: &mut Vec<String>,
 ) -> DroneApplyResult {
     let url = config::drone_apply_tool_url();
-    trace.push(format!(
-        "stage=drone_http_begin tool={name} step_id={step_id} url={url}"
-    ));
+    trace.push(format!("stage=drone_http_begin tool={name} step_id={step_id} url={url}"));
     let t0 = Instant::now();
     let normalized = normalize_drone_tool_params(name, apply_params.clone());
     let params_json = match normalized.as_ref() {
@@ -753,11 +746,13 @@ async fn drone_apply_via_http(
     }
     let send_result = req
         .json(&body)
-        .timeout(Duration::from_secs(if options.wait_for_drone_ack {
-            30 + options.ack_timeout_ms / 1000
-        } else {
-            30
-        }))
+        .timeout(Duration::from_secs(
+            if options.wait_for_drone_ack {
+                30 + options.ack_timeout_ms / 1000
+            } else {
+                30
+            },
+        ))
         .send()
         .await;
     let elapsed_ms = t0.elapsed().as_millis() as u64;
