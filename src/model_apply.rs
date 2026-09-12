@@ -65,9 +65,8 @@ fn interpret_model_tool_body(status_code: u16, v: &serde_json::Value) -> ModelAp
             skipped: false,
         };
     }
-    let msg = v.get("message").and_then(|x| x.as_str()).unwrap_or("");
     let ran = inference_ms.is_some();
-    if !ran || msg.ends_with(" active") {
+    if !ran {
         return ModelApplyResult {
             http_status: status_code,
             elapsed_ms: 0,
