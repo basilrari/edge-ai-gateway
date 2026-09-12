@@ -20,7 +20,7 @@ This file defines the **exact API contract** (inputs and outputs) and **how the 
 
 - **`POST /infer`** and mutating drone proxies (`POST /drone/mission/upload`, `POST /drone/mission/clear`, `POST /drone/logs/clear`) require the same `MCP_API_KEY` check as `/mcp/*`: `Authorization: Bearer <key>` or `X-API-Key`. **503** if the env var is unset/empty; **401** if it does not match. `GET /status` and telemetry proxies are unchanged (no key).
 - Mission Control must send that header or `/infer` will 401/503.
-- ACK-wait is **on** unless `DRONE_WAIT_FOR_ACK` is explicitly `0` / `false` (empty/unset stays on). The gateway always sends drone-http `wait_for` `"ack"` or `"none"`. Per-request `x-wait-for-ack: 1` / `true` / `0` / `false` still overrides.
+- ACK-wait is **on** unless `DRONE_WAIT_FOR_ACK` is explicitly `0` / `false` (empty/unset stays on). The gateway always sends drone-http `wait_for` `"ack"` or `"none"`. A present `x-wait-for-ack` uses the same rule (`ack_env_enabled`): only `0` / `false` turn wait off; `1` / `true` / empty / any other value stay on. Absent header keeps the env default.
 
 ---
 

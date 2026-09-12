@@ -142,11 +142,10 @@ async fn infer_handler(
 
     let wait_header = headers
         .get("x-wait-for-ack")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"));
+        .and_then(|h| h.to_str().ok());
     let mut options = ProcessOptions::default();
-    if let Some(force) = wait_header {
-        options.wait_for_drone_ack = force;
+    if wait_header.is_some() {
+        options.wait_for_drone_ack = config::ack_env_enabled(wait_header);
     }
     if let Some(ms) = headers
         .get("x-ack-timeout-ms")

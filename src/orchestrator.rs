@@ -499,8 +499,6 @@ impl Orchestrator {
                                 category = Some("none".to_string());
                                 tool_name = Some("tool_parse_failed".into());
                                 action_taken = format!("tool_parse_failed: {e}");
-                                self.last_command_category = None;
-                                self.last_command_name = None;
                             }
                         }
                     }
