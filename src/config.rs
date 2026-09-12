@@ -193,6 +193,7 @@ pub fn drone_ack_timeout_ms_default() -> u64 {
 }
 
 /// Allowed drone base URL for eval E2E (comma-separated prefixes). Default: loopback only.
+#[cfg(feature = "eval")]
 pub fn eval_sitl_drone_url_prefixes() -> Vec<String> {
     std::env::var("EVAL_SITL_DRONE_URL_PREFIXES")
         .unwrap_or_else(|_| "http://127.0.0.1:3001,http://localhost:3001".to_string())
@@ -202,10 +203,14 @@ pub fn eval_sitl_drone_url_prefixes() -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "eval")]
 pub fn eval_sitl_safety_token() -> Option<String> {
-    std::env::var("EVAL_SITL_TOKEN").ok().filter(|s| !s.is_empty())
+    std::env::var("EVAL_SITL_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
+#[cfg(feature = "eval")]
 pub fn eval_sitl_drone_url_allowed() -> bool {
     let base = drone_server_base_url();
     eval_sitl_drone_url_prefixes()

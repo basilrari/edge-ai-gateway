@@ -18,10 +18,7 @@ fn set_alt_key(obj: &mut Map<String, Value>, key: &str, value: f64) {
 }
 
 /// Patch LLM drone params: `0` / omitted `alt_m` → 15 m; `takeoff` only patches explicit `altitude_m`.
-pub fn normalize_drone_tool_params(
-    tool_name: &str,
-    params: Option<Value>,
-) -> Option<Value> {
+pub fn normalize_drone_tool_params(tool_name: &str, params: Option<Value>) -> Option<Value> {
     let mut obj = match params {
         Some(Value::Object(m)) => m,
         Some(Value::Null) | None => Map::new(),
@@ -38,12 +35,6 @@ pub fn normalize_drone_tool_params(
         "goto_location" => {
             let v = obj.get("alt_m").and_then(|x| x.as_f64());
             set_alt_key(&mut obj, "alt_m", altitude_above_home(v));
-        }
-        "waypoint_inject" => {
-            if obj.contains_key("lat_deg") && obj.contains_key("lon_deg") {
-                let v = obj.get("alt_m").and_then(|x| x.as_f64());
-                set_alt_key(&mut obj, "alt_m", altitude_above_home(v));
-            }
         }
         _ => {}
     }
@@ -74,11 +65,7 @@ mod tests {
 
     #[test]
     fn takeoff_zero_becomes_fifteen() {
-        let out = normalize_drone_tool_params(
-            "takeoff",
-            Some(json!({ "altitude_m": 0 })),
-        )
-        .unwrap();
+        let out = normalize_drone_tool_params("takeoff", Some(json!({ "altitude_m": 0 }))).unwrap();
         assert_eq!(out["altitude_m"], 15.0);
     }
 
@@ -95,6 +82,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out["alt_m"], 15.0);
+    }
+
+    #[test]
+    fn unknown_tool_params_unchanged() {
+        let out = normalize_drone_tool_params(
+            "waypoint_inject",
+            Some(json!({ "lat_deg": 1.0, "lon_deg": 2.0 })),
+        )
+        .unwrap();
+        assert!(out.get("alt_m").is_none());
+        assert_eq!(out["lat_deg"], 1.0);
     }
 
     #[test]
