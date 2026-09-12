@@ -13,8 +13,14 @@ This file defines the **exact API contract** (inputs and outputs) and **how the 
 
 ## Base URL
 
-- Server: `http://0.0.0.0:3000` (or `http://localhost:3000` from the same host).
+- Server: `http://127.0.0.1:3000` (loopback). Override with `GATEWAY_BIND` (e.g. `0.0.0.0:3000`).
 - CORS: All origins, `GET` / `POST` / `OPTIONS`, all headers allowed.
+
+## Auth and ACK defaults
+
+- **`POST /infer`** and mutating drone proxies (`POST /drone/mission/upload`, `POST /drone/mission/clear`, `POST /drone/logs/clear`) require the same `MCP_API_KEY` check as `/mcp/*`: `Authorization: Bearer <key>` or `X-API-Key`. **503** if the env var is unset/empty; **401** if it does not match. `GET /status` and telemetry proxies are unchanged (no key).
+- Mission Control must send that header or `/infer` will 401/503.
+- ACK-wait is **on** unless `DRONE_WAIT_FOR_ACK` is explicitly `0` / `false` (empty/unset stays on). The gateway always sends drone-http `wait_for` `"ack"` or `"none"`. A present `x-wait-for-ack` uses the same rule (`ack_env_enabled`): only `0` / `false` turn wait off; `1` / `true` / empty / any other value stay on. Absent header keeps the env default.
 
 ---
 
@@ -78,7 +84,7 @@ When nothing has been run yet or after clear override:
 
 - Method: `POST`
 - Path: `/infer`
-- Headers: `Content-Type: application/json`
+- Headers: `Content-Type: application/json`. **Auth required:** `Authorization: Bearer <MCP_API_KEY>` or `X-API-Key` (503 if unset, 401 if mismatch).
 - Body: **One** of the following JSON objects (externally tagged enum).
 
 **Infer** (run LLM and return proposed tool; does **not** apply or send to Python until frontend sends **ApplyTool**):
@@ -140,7 +146,7 @@ Optional **`params`** (object) for tools that need structured arguments, e.g. `g
 
 | Field             | Type    | Description |
 |-------------------|--------|-------------|
-| `state`           | string | `"IDLE"` \| `"ACTIVE"` \| `"OVERRIDE_ACTIVE"`. |
+| `state`           | string | `"IDLE"` \| `"ACTIVE"` \| `"OVERRIDE_ACTIVE"` \| `"ERROR"` (LLM/parse failure on this response only; stored gateway state is not forced to IDLE). |
 | `model`           | string \| null | Current model or `null`. |
 | `override_active` | bool   | Whether an override is active. |
 | `category`        | string \| null | First step category when Infer ran: `"drone"` or `"model"` (for display / single-step ApplyTool). |

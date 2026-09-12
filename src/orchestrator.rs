@@ -1,6 +1,6 @@
 use crate::config;
 use crate::drone_params::{normalize_drone_tasks, normalize_drone_tool_params, tasks_display_json};
-use crate::llm::{normalize_none_reason, LlmToolPayload};
+use crate::llm::{normalize_none_reason, validate_llm_tasks, LlmToolPayload};
 use crate::llm_decision::run_llm_tool_decision;
 use crate::model_apply::model_apply_via_http;
 use crate::timing::{drone_step_id, finalize_pipeline_layers, unix_ms_now};
@@ -374,10 +374,8 @@ impl Orchestrator {
                             state = ?self.current_state,
                             llm_latency_ms,
                             error = %e,
-                            reason = "HTTP request to LLM failed; falling back to text model"
+                            reason = "HTTP request to LLM failed"
                         );
-                        self.current_model = Some("text".to_string());
-                        new_state = GatewayState::ACTIVE;
                         action_taken = "llm_http_failed_fallback_text".to_string();
                     } else if dec.chat_parse_error.is_some() {
                         let e = dec.chat_parse_error.as_deref().unwrap_or("");
@@ -387,10 +385,8 @@ impl Orchestrator {
                             state = ?self.current_state,
                             llm_latency_ms,
                             error = %e,
-                            reason = "failed to parse LLM envelope; falling back to text model"
+                            reason = "failed to parse LLM envelope"
                         );
-                        self.current_model = Some("text".to_string());
-                        new_state = GatewayState::ACTIVE;
                         action_taken = "llm_parse_failed_fallback_text".to_string();
                     } else if let Some(tool_res) = dec.tool_payload {
                         let status = dec.http_status.unwrap_or(0);
@@ -503,9 +499,6 @@ impl Orchestrator {
                                 category = Some("none".to_string());
                                 tool_name = Some("tool_parse_failed".into());
                                 action_taken = format!("tool_parse_failed: {e}");
-                                new_state = GatewayState::IDLE;
-                                self.last_command_category = None;
-                                self.last_command_name = None;
                             }
                         }
                     }
@@ -526,6 +519,22 @@ impl Orchestrator {
                     name: name.clone(),
                     params: apply_params.clone(),
                 };
+                match validate_llm_tasks(vec![tool.clone()]) {
+                    LlmToolPayload::NoneReason(reason) => {
+                        action_taken = format!("tool_rejected:{reason}");
+                        drone_error = Some(format!("tool_not_allowed:{name}"));
+                        category = Some(cat.clone());
+                        tool_name = Some(name.clone());
+                        trace.push(format!(
+                            "stage=apply_tool_rejected name={name} reason={reason}"
+                        ));
+                    }
+                    LlmToolPayload::Tasks(mut tasks) => {
+                        let tool = tasks.remove(0);
+                        let cat = tool.category.clone();
+                        let name = tool.name.clone();
+                        let apply_params = tool.params.clone();
+                        tool_params = apply_params.clone();
                 let override_active = matches!(self.current_state, GatewayState::OVERRIDE_ACTIVE)
                     && self
                         .override_until
@@ -546,7 +555,7 @@ impl Orchestrator {
                     if override_active {
                         trace.push("stage=model_apply_skipped_override".into());
                     } else {
-                        let r = model_apply_via_http(client, request_id, name, &mut trace).await;
+                        let r = model_apply_via_http(client, request_id, &name, &mut trace).await;
                         model_steps.push(ModelStepTiming {
                             step_index: 0,
                             tool: name.to_string(),
@@ -579,8 +588,8 @@ impl Orchestrator {
                         client,
                         request_id,
                         &step_id,
-                        name,
-                        apply_params,
+                        &name,
+                        &apply_params,
                         options,
                         &mut trace,
                     )
@@ -630,6 +639,8 @@ impl Orchestrator {
                     tool_name = %name,
                     reason = "tool applied after user acceptance"
                 );
+                    }
+                }
             }
             GatewayCommand::ApplyToolSequence { tools } => {
                 trace.push(format!(
@@ -646,6 +657,15 @@ impl Orchestrator {
                         reason = "ApplyToolSequence received empty tools"
                     );
                 } else {
+                    match validate_llm_tasks(tools.clone()) {
+                        LlmToolPayload::NoneReason(reason) => {
+                            action_taken = format!("tool_rejected:{reason}");
+                            drone_error = Some(format!("tool_not_allowed:{reason}"));
+                            trace.push(format!(
+                                "stage=apply_sequence_rejected reason={reason}"
+                            ));
+                        }
+                        LlmToolPayload::Tasks(tools) => {
                     let override_active = matches!(self.current_state, GatewayState::OVERRIDE_ACTIVE)
                         && self
                             .override_until
@@ -794,6 +814,8 @@ impl Orchestrator {
                             stopped_at = ?stopped_at,
                             reason = "sequence stopped on first drone step failure"
                         );
+                    }
+                        }
                     }
                 }
             }
@@ -992,14 +1014,18 @@ async fn drone_apply_via_http(
         "tool": name,
         "params": params_json,
         "step_id": step_id,
+        "wait_for": if options.wait_for_drone_ack { "ack" } else { "none" },
     });
     if options.wait_for_drone_ack {
-        body["wait_for"] = serde_json::json!("ack");
         body["ack_timeout_ms"] = serde_json::json!(options.ack_timeout_ms);
     }
-    let send_result = client
-        .post(&url)
-        .header("x-request-id", request_id)
+    let mut req = client.post(&url).header("x-request-id", request_id);
+    if let Some(key) = config::mcp_api_key() {
+        req = req
+            .header("authorization", format!("Bearer {key}"))
+            .header("x-api-key", key);
+    }
+    let send_result = req
         .json(&body)
         .timeout(Duration::from_secs(
             if options.wait_for_drone_ack {
@@ -1095,5 +1121,89 @@ async fn drone_apply_via_http(
             completion_status: None,
             ack_result: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod apply_tool_reject_tests {
+    use super::*;
+    use crate::types::{GatewayCommand, GatewayState, ProcessOptions, ToolCall};
+    use std::time::{Duration, Instant};
+
+    fn no_http_wait() -> ProcessOptions {
+        ProcessOptions {
+            wait_for_drone_ack: false,
+            ack_timeout_ms: 50,
+        }
+    }
+
+    fn override_orch() -> Orchestrator {
+        let mut orch = Orchestrator::new();
+        orch.current_state = GatewayState::OVERRIDE_ACTIVE;
+        orch.override_until = Some(Instant::now() + Duration::from_secs(60));
+        orch
+    }
+
+    fn fast_client() -> Client {
+        Client::builder()
+            .timeout(Duration::from_millis(200))
+            .build()
+            .expect("client")
+    }
+
+    #[tokio::test]
+    async fn apply_tool_force_arm_rejected_before_dispatch() {
+        let mut orch = override_orch();
+        let outcome = orch
+            .process_command(
+                GatewayCommand::ApplyTool {
+                    category: "drone".into(),
+                    tool_name: "force_arm".into(),
+                    params: None,
+                },
+                &fast_client(),
+                "test-force-arm",
+                None,
+                no_http_wait(),
+            )
+            .await;
+        assert_eq!(outcome.action_taken, "tool_rejected:invalid_request");
+        assert!(outcome.drone_steps.is_empty());
+        assert!(outcome.model_steps.is_empty());
+        assert!(outcome.drone_http_status.is_none());
+        assert_eq!(orch.current_state, GatewayState::OVERRIDE_ACTIVE);
+        assert!(
+            outcome.latency_ms < 1000,
+            "reject must not wait on HTTP: {} ms",
+            outcome.latency_ms
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_sequence_unknown_name_rejected_before_dispatch() {
+        let mut orch = override_orch();
+        let outcome = orch
+            .process_command(
+                GatewayCommand::ApplyToolSequence {
+                    tools: vec![ToolCall {
+                        category: "drone".into(),
+                        name: "do_a_barrel_roll".into(),
+                        params: None,
+                    }],
+                },
+                &fast_client(),
+                "test-seq-unknown",
+                None,
+                no_http_wait(),
+            )
+            .await;
+        assert_eq!(outcome.action_taken, "tool_rejected:invalid_request");
+        assert!(outcome.drone_steps.is_empty());
+        assert_eq!(orch.current_state, GatewayState::OVERRIDE_ACTIVE);
+        assert!(
+            outcome.latency_ms < 1000,
+            "reject must not wait on HTTP: {} ms",
+            outcome.latency_ms
+        );
     }
 }

@@ -8,7 +8,9 @@ The Gateway is the **central router** in the [SAR drone architecture](../README.
 
 ## Overview
 
-- **Server**: Axum HTTP server on `http://0.0.0.0:3000` (CORS enabled for all origins).
+- **Server**: Axum HTTP server on `http://127.0.0.1:3000` (loopback; set `GATEWAY_BIND` e.g. `0.0.0.0:3000` to override). CORS enabled for all origins.
+- **Auth**: `POST /infer` and mutating `/drone/*` (`mission/upload`, `mission/clear`, `logs/clear`) require `MCP_API_KEY` via `Authorization: Bearer` or `X-API-Key` (503 if unset, 401 if mismatch). Same check as `/mcp/*`.
+- **ACK**: drone steps wait for FC `COMMAND_ACK` unless `DRONE_WAIT_FOR_ACK` is explicitly `0` / `false`.
 - **LLM**: Sends prompts to `http://localhost:8080/v1/chat/completions` (e.g. local LLM server). System prompt is **`SAR_SYSTEM_PROMPT`** in `src/llm.rs` (example-first JSON `tasks` router, max **5** steps). The LLM returns `{"tasks":[...]}` with `category` `drone` \| `model` \| `none`. Proposals include `pending_approval: true` and, for multi-step plans, **`tools`**: an array of steps. The frontend accepts **once**, then sends **ApplyTool** (single step) or **ApplyToolSequence** (multiple steps). Drone steps are applied sequentially; execution **stops on the first failed** drone HTTP call.
 - **States**: `IDLE`, `ACTIVE` (last applied tool), `OVERRIDE_ACTIVE` (manual model override for a timeout).
 
@@ -19,14 +21,14 @@ cargo build
 cargo run
 ```
 
-Server listens on port **3000**.
+Server listens on **127.0.0.1:3000** unless `GATEWAY_BIND` is set. `POST /infer` needs `MCP_API_KEY`.
 
 ## API Summary
 
 | Method | Path    | Description |
 |--------|--------|-------------|
 | `GET`  | `/status` | Current state, model, override flag, **active command** (drone/model tool or `none`), and latency/memory. |
-| `POST` | `/infer`  | Send a command (infer with prompt, ApplyTool, ApplyToolSequence, override, or clear override). Returns state, model, override, category/tool name, optional `tools`, LLM response, action taken, and latencies. |
+| `POST` | `/infer`  | Auth (`MCP_API_KEY`). Infer, ApplyTool, ApplyToolSequence, override, or clear override. |
 | `GET`  | `/drone/position` | Proxies drone-http `GET /v1/position` (lat/lon from last `GLOBAL_POSITION_INT`) for the frontend map. |
 
 ### GET /status

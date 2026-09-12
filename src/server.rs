@@ -6,6 +6,7 @@ use axum::{
     extract::ws::WebSocketUpgrade,
     extract::State,
     http::{HeaderMap, Method, StatusCode},
+    middleware,
     routing::{any, get, post},
     Json, Router,
 };
@@ -19,7 +20,9 @@ use uuid::Uuid;
 use crate::config;
 use crate::infer_log::InferLog;
 use crate::orchestrator::Orchestrator;
-use crate::types::{ApiResponse, GatewayCommand, HandlerTimingInput, ProcessOptions};
+use crate::types::{
+    infer_failure_action, ApiResponse, GatewayCommand, HandlerTimingInput, ProcessOptions,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -34,16 +37,21 @@ pub fn build_router(state: AppState) -> Router {
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(Any);
 
-    let app = Router::new()
+    let protected = Router::new()
         .route("/infer", post(infer_handler))
+        .route("/drone/mission/upload", post(drone_mission_upload_handler))
+        .route("/drone/mission/clear", post(drone_mission_clear_handler))
+        .route("/drone/logs/clear", post(drone_logs_clear_handler))
+        .route_layer(middleware::from_fn(
+            crate::mcp_proxy::require_mcp_api_key_mw,
+        ));
+
+    let app = Router::new()
         .route("/status", get(status_handler))
         .route("/drone/position", get(drone_position_handler))
         .route("/drone/telemetry", get(drone_telemetry_handler))
         .route("/drone/mission", get(drone_mission_handler))
-        .route("/drone/mission/upload", post(drone_mission_upload_handler))
-        .route("/drone/mission/clear", post(drone_mission_clear_handler))
         .route("/drone/logs", get(drone_logs_handler))
-        .route("/drone/logs/clear", post(drone_logs_clear_handler))
         .route("/drone/logs/mavlink", get(drone_mavlink_logs_handler))
         .route("/drone/logs/ws", get(drone_logs_ws_handler))
         .route("/logs/llm", get(llm_logs_handler))
@@ -56,7 +64,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/mcp", any(crate::mcp_proxy::mcp_proxy_handler))
         .route("/mcp/sse", any(crate::mcp_proxy::mcp_proxy_handler))
         .route("/mcp/messages", any(crate::mcp_proxy::mcp_proxy_handler))
-        .route("/mcp/messages/", any(crate::mcp_proxy::mcp_proxy_handler));
+        .route("/mcp/messages/", any(crate::mcp_proxy::mcp_proxy_handler))
+        .merge(protected);
 
     #[cfg(feature = "eval")]
     let app = app.merge(crate::eval::eval_router());
@@ -133,11 +142,10 @@ async fn infer_handler(
 
     let wait_header = headers
         .get("x-wait-for-ack")
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"));
+        .and_then(|h| h.to_str().ok());
     let mut options = ProcessOptions::default();
-    if let Some(force) = wait_header {
-        options.wait_for_drone_ack = force;
+    if wait_header.is_some() {
+        options.wait_for_drone_ack = config::ack_env_enabled(wait_header);
     }
     if let Some(ms) = headers
         .get("x-ack-timeout-ms")
@@ -173,7 +181,11 @@ async fn infer_handler(
 
     let model = orchestrator.current_model.clone();
     let override_active = orchestrator.override_until.is_some();
-    let state_str = format!("{}", orchestrator.current_state);
+    let state_str = if infer_failure_action(&outcome.action_taken) {
+        "ERROR".to_string()
+    } else {
+        format!("{}", orchestrator.current_state)
+    };
     drop(orchestrator);
 
     if let Some(prompt) = prompt_text {
@@ -550,7 +562,7 @@ async fn drone_logs_ws_handler(ws: WebSocketUpgrade) -> impl axum::response::Int
 
 pub async fn run_http_server(state: AppState) {
     let app = build_router(state);
-    let addr: SocketAddr = "0.0.0.0:3000".parse().expect("invalid listen addr");
+    let addr: SocketAddr = config::listen_addr();
 
     info!(
         action = "http_server_start",

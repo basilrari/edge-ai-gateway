@@ -41,6 +41,51 @@ fn inference_ms_from_body(v: &serde_json::Value) -> Option<u64> {
         })
 }
 
+/// `ok` only when a frame ran: not skipped, not "tool active", inference metrics present.
+fn interpret_model_tool_body(status_code: u16, v: &serde_json::Value) -> ModelApplyResult {
+    let skipped = v.get("skipped").and_then(|x| x.as_bool()).unwrap_or(false);
+    let inference_ms = inference_ms_from_body(v);
+    if skipped {
+        return ModelApplyResult {
+            http_status: status_code,
+            elapsed_ms: 0,
+            ok: false,
+            error_detail: Some("model_skipped_busy".to_string()),
+            inference_ms,
+            skipped: true,
+        };
+    }
+    if let Some(err) = v.get("error").and_then(|x| x.as_str()) {
+        return ModelApplyResult {
+            http_status: status_code,
+            elapsed_ms: 0,
+            ok: false,
+            error_detail: Some(err.to_string()),
+            inference_ms,
+            skipped: false,
+        };
+    }
+    let ran = inference_ms.is_some();
+    if !ran {
+        return ModelApplyResult {
+            http_status: status_code,
+            elapsed_ms: 0,
+            ok: false,
+            error_detail: Some("model_no_inference".to_string()),
+            inference_ms,
+            skipped: false,
+        };
+    }
+    ModelApplyResult {
+        http_status: status_code,
+        elapsed_ms: 0,
+        ok: status_code >= 200 && status_code < 300,
+        error_detail: None,
+        inference_ms,
+        skipped: false,
+    }
+}
+
 pub async fn model_apply_via_http(
     client: &Client,
     request_id: &str,
@@ -98,40 +143,15 @@ pub async fn model_apply_via_http(
             let parsed: Result<serde_json::Value, _> = serde_json::from_str(&body_text);
             match parsed {
                 Ok(v) => {
-                    let skipped = v.get("skipped").and_then(|x| x.as_bool()).unwrap_or(false);
-                    let inference_ms = inference_ms_from_body(&v);
-                    if let Some(inf) = inference_ms {
+                    let mut r = interpret_model_tool_body(status_code, &v);
+                    r.elapsed_ms = elapsed_ms;
+                    if r.skipped {
+                        trace.push("stage=model_http_skipped busy".into());
+                    }
+                    if let Some(inf) = r.inference_ms {
                         trace.push(format!("stage=model_inference_ms ms={inf}"));
                     }
-                    if skipped {
-                        trace.push("stage=model_http_skipped busy".into());
-                        return ModelApplyResult {
-                            http_status: status_code,
-                            elapsed_ms,
-                            ok: true,
-                            error_detail: None,
-                            inference_ms,
-                            skipped: true,
-                        };
-                    }
-                    if let Some(err) = v.get("error").and_then(|x| x.as_str()) {
-                        return ModelApplyResult {
-                            http_status: status_code,
-                            elapsed_ms,
-                            ok: false,
-                            error_detail: Some(err.to_string()),
-                            inference_ms,
-                            skipped: false,
-                        };
-                    }
-                    ModelApplyResult {
-                        http_status: status_code,
-                        elapsed_ms,
-                        ok: status_code >= 200 && status_code < 300,
-                        error_detail: None,
-                        inference_ms,
-                        skipped: false,
-                    }
+                    r
                 }
                 Err(e) => ModelApplyResult {
                     http_status: status_code,
@@ -156,5 +176,33 @@ mod tests {
         assert_eq!(map_gateway_model_tool("flood_seg"), Some("detect_flood"));
         assert_eq!(map_gateway_model_tool("flood_class"), Some("detect_flood"));
         assert!(map_gateway_model_tool("takeoff").is_none());
+    }
+
+    #[test]
+    fn skipped_busy_is_not_ok() {
+        let r = interpret_model_tool_body(200, &serde_json::json!({"skipped": true}));
+        assert!(!r.ok);
+        assert!(r.skipped);
+        assert_eq!(r.error_detail.as_deref(), Some("model_skipped_busy"));
+    }
+
+    #[test]
+    fn tool_active_without_metrics_is_not_ok() {
+        let r = interpret_model_tool_body(
+            200,
+            &serde_json::json!({"message": "detect_human active"}),
+        );
+        assert!(!r.ok);
+        assert_eq!(r.error_detail.as_deref(), Some("model_no_inference"));
+    }
+
+    #[test]
+    fn inference_metrics_count_as_ran() {
+        let r = interpret_model_tool_body(
+            200,
+            &serde_json::json!({"metrics": {"total_inference_ms": 12.4}}),
+        );
+        assert!(r.ok);
+        assert_eq!(r.inference_ms, Some(12));
     }
 }
