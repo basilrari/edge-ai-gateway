@@ -18,7 +18,10 @@ fn set_alt_key(obj: &mut Map<String, Value>, key: &str, value: f64) {
 }
 
 /// Patch LLM drone params: `0` / omitted `alt_m` → 15 m; `takeoff` only patches explicit `altitude_m`.
-pub fn normalize_drone_tool_params(tool_name: &str, params: Option<Value>) -> Option<Value> {
+pub fn normalize_drone_tool_params(
+    tool_name: &str,
+    params: Option<Value>,
+) -> Option<Value> {
     let mut obj = match params {
         Some(Value::Object(m)) => m,
         Some(Value::Null) | None => Map::new(),
@@ -65,7 +68,11 @@ mod tests {
 
     #[test]
     fn takeoff_zero_becomes_fifteen() {
-        let out = normalize_drone_tool_params("takeoff", Some(json!({ "altitude_m": 0 }))).unwrap();
+        let out = normalize_drone_tool_params(
+            "takeoff",
+            Some(json!({ "altitude_m": 0 })),
+        )
+        .unwrap();
         assert_eq!(out["altitude_m"], 15.0);
     }
 

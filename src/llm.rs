@@ -195,7 +195,11 @@ fn parse_tool_sequence_inner(cleaned: &str) -> Result<LlmToolPayload, serde_json
             return Ok(LlmToolPayload::NoneReason(NONE_REASON_INVALID.into()));
         }
         let original_len = envelope.tasks.len();
-        let out: Vec<ToolCall> = envelope.tasks.into_iter().take(MAX_LLM_TASKS).collect();
+        let out: Vec<ToolCall> = envelope
+            .tasks
+            .into_iter()
+            .take(MAX_LLM_TASKS)
+            .collect();
         if original_len > MAX_LLM_TASKS {
             warn!(
                 action = "llm_tasks_truncated",

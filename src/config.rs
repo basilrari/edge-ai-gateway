@@ -205,9 +205,7 @@ pub fn eval_sitl_drone_url_prefixes() -> Vec<String> {
 
 #[cfg(feature = "eval")]
 pub fn eval_sitl_safety_token() -> Option<String> {
-    std::env::var("EVAL_SITL_TOKEN")
-        .ok()
-        .filter(|s| !s.is_empty())
+    std::env::var("EVAL_SITL_TOKEN").ok().filter(|s| !s.is_empty())
 }
 
 #[cfg(feature = "eval")]

@@ -15,7 +15,9 @@ use crate::llm::LlmToolPayload;
 use crate::llm_decision::run_llm_tool_decision;
 use crate::server::{pick_request_id, AppState};
 use crate::timing::unix_ms_now;
-use crate::types::{GatewayCommand, HandlerTimingInput, PipelineTiming, ProcessOptions, ToolCall};
+use crate::types::{
+    GatewayCommand, HandlerTimingInput, PipelineTiming, ProcessOptions, ToolCall,
+};
 use serde::{Deserialize, Serialize};
 use tracing::{info, info_span, warn};
 
@@ -90,7 +92,10 @@ pub async fn eval_handler(
 
     let t0 = Instant::now();
     let mut trace = vec![format!("gateway_request_id={request_id}")];
-    trace.push(format!("command=Eval prompt_len={}", body.prompt.len()));
+    trace.push(format!(
+        "command=Eval prompt_len={}",
+        body.prompt.len()
+    ));
 
     let dec = run_llm_tool_decision(&state.client, &body.prompt, &request_id, &mut trace).await;
     let e2e_parse_ms = t0.elapsed().as_millis() as u64;
@@ -116,9 +121,8 @@ pub async fn eval_handler(
             Ok(LlmToolPayload::NoneReason(reason)) => {
                 json_valid = true;
                 none_reason = Some(reason.clone());
-                let canon =
-                    serde_json::json!({ "tasks": [{ "category": "none", "name": reason }] })
-                        .to_string();
+                let canon = serde_json::json!({ "tasks": [{ "category": "none", "name": reason }] })
+                    .to_string();
                 llm_tool_json_raw = Some(canon.clone());
                 llm_tool_json = Some(canon);
                 "eval_ok_none".to_string()

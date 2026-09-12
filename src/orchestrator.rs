@@ -23,6 +23,19 @@ pub struct Orchestrator {
     pub last_command_name: Option<String>,
 }
 
+struct ApplyOutcome {
+    action_taken: String,
+    category: Option<String>,
+    tool_name: Option<String>,
+    state: GatewayState,
+    drone_http_status: Option<u16>,
+    drone_http_ms: Option<u64>,
+    drone_error: Option<String>,
+    drone_steps: Vec<DroneStepTiming>,
+    model_steps: Vec<ModelStepTiming>,
+    apply_total_ms: u64,
+}
+
 impl Orchestrator {
     pub fn new() -> Self {
         Self {
@@ -96,6 +109,7 @@ impl Orchestrator {
     }
 
     /// Run an ordered list of validated drone/model tasks (HTTP apply).
+    /// `command` is the `/infer` variant that called in (`infer`, `apply_tool`, `apply_tool_sequence`).
     async fn apply_tasks(
         &mut self,
         tools: &[ToolCall],
@@ -103,36 +117,10 @@ impl Orchestrator {
         request_id: &str,
         override_active: bool,
         options: ProcessOptions,
+        command: &'static str,
         trace: &mut Vec<String>,
-    ) -> (
-        String,
-        Option<String>,
-        Option<String>,
-        GatewayState,
-        Option<u16>,
-        Option<u64>,
-        Option<String>,
-        Vec<DroneStepTiming>,
-        Vec<ModelStepTiming>,
-        u64,
-    ) {
+    ) -> ApplyOutcome {
         let apply_start = Instant::now();
-        if tools.is_empty() {
-            trace.push("stage=apply_tasks_empty".into());
-            return (
-                "apply_sequence_empty".to_string(),
-                None,
-                None,
-                GatewayState::IDLE,
-                None,
-                None,
-                None,
-                vec![],
-                vec![],
-                0,
-            );
-        }
-
         let new_state = GatewayState::ACTIVE;
         let mut last_success: Option<ToolCall> = None;
         let mut stopped_at: Option<usize> = None;
@@ -271,40 +259,43 @@ impl Orchestrator {
             format!("sequence_ok:{}_steps", tools.len())
         };
 
-        if stopped_at.is_some() {
+        if let Some(idx) = stopped_at {
+            let stopped_category = tools[idx].category.as_str();
             info!(
                 action = "apply_tasks_partial",
+                command,
                 request_id = %request_id,
-                stopped_at = ?stopped_at,
-                reason = "sequence stopped on first drone step failure"
+                stopped_at = idx,
+                stopped_category,
+                reason = %format!("sequence stopped on first {stopped_category} step failure")
             );
         } else {
             info!(
                 action = "apply_tasks_complete",
+                command,
                 request_id = %request_id,
                 steps = tools.len(),
-                reason = "all tasks applied after infer"
+                reason = "all tasks applied"
             );
         }
 
         let apply_total_ms = apply_start.elapsed().as_millis() as u64;
-        trace.push(format!("stage=infer_auto_apply_done ms={apply_total_ms}"));
+        trace.push(format!("stage={command}_apply_done ms={apply_total_ms}"));
 
-        (
+        ApplyOutcome {
             action_taken,
             category,
             tool_name,
-            new_state,
+            state: new_state,
             drone_http_status,
             drone_http_ms,
             drone_error,
             drone_steps,
             model_steps,
             apply_total_ms,
-        )
+        }
     }
 
-    #[allow(unused_assignments)]
     pub async fn process_command(
         &mut self,
         cmd: GatewayCommand,
@@ -322,7 +313,6 @@ impl Orchestrator {
         let mut drone_steps: Vec<DroneStepTiming> = Vec::new();
         let mut model_steps: Vec<ModelStepTiming> = Vec::new();
         let mut new_state = self.current_state;
-        // Overwritten on every path below before use in CommandOutcome.
         let mut action_taken = String::new();
         let mut llm_response = String::new();
         let mut category: Option<String> = None;
@@ -333,6 +323,7 @@ impl Orchestrator {
         let mut tool_params: Option<serde_json::Value> = None;
         let mut tools_proposal: Option<Vec<ToolCall>> = None;
         let mut llm_tool_json: Option<String> = None;
+        let mut applied: Option<ApplyOutcome> = None;
 
         match cmd {
             GatewayCommand::Infer { prompt } => {
@@ -419,48 +410,28 @@ impl Orchestrator {
                                 tools_proposal = Some(tasks.clone());
                                 llm_tool_json = Some(tasks_display_json(&tasks));
                                 trace.push(format!("stage=infer_auto_apply steps={}", tasks.len()));
-                                let (
-                                    act,
-                                    cat,
-                                    tname,
-                                    st,
-                                    d_status,
-                                    d_ms,
-                                    d_err,
-                                    d_steps,
-                                    m_steps,
-                                    apply_ms,
-                                ) = self
+                                let a = self
                                     .apply_tasks(
                                         &tasks,
                                         client,
                                         request_id,
                                         override_active,
                                         options,
+                                        "infer",
                                         &mut trace,
                                     )
                                     .await;
-                                action_taken = act;
-                                category = cat;
-                                tool_name = tname;
-                                new_state = st;
-                                drone_http_status = d_status;
-                                drone_http_ms = d_ms;
-                                drone_error = d_err;
-                                drone_steps = d_steps;
-                                model_steps = m_steps;
-                                apply_total_ms = Some(apply_ms);
-
                                 info!(
                                     action = "infer_auto_apply",
                                     request_id = %request_id,
                                     steps = tasks.len(),
-                                    category = ?category,
-                                    tool_name = ?tool_name,
+                                    category = ?a.category,
+                                    tool_name = ?a.tool_name,
                                     llm_latency_ms,
                                     http_status = %status,
                                     reason = "LLM tasks applied immediately after infer"
                                 );
+                                applied = Some(a);
                             }
                             Err(e) => {
                                 let preview: String =
@@ -511,37 +482,18 @@ impl Orchestrator {
                     }
                     LlmToolPayload::Tasks(tasks) => {
                         let override_active = self.override_is_live();
-                        let (
-                            act,
-                            cat,
-                            tname,
-                            st,
-                            d_status,
-                            d_ms,
-                            d_err,
-                            d_steps,
-                            m_steps,
-                            apply_ms,
-                        ) = self
-                            .apply_tasks(
+                        applied = Some(
+                            self.apply_tasks(
                                 &tasks,
                                 client,
                                 request_id,
                                 override_active,
                                 options,
+                                "apply_tool",
                                 &mut trace,
                             )
-                            .await;
-                        action_taken = act;
-                        category = cat;
-                        tool_name = tname;
-                        new_state = st;
-                        drone_http_status = d_status;
-                        drone_http_ms = d_ms;
-                        drone_error = d_err;
-                        drone_steps = d_steps;
-                        model_steps = m_steps;
-                        apply_total_ms = Some(apply_ms);
+                            .await,
+                        );
                     }
                 }
             }
@@ -565,37 +517,18 @@ impl Orchestrator {
                         }
                         LlmToolPayload::Tasks(tools) => {
                             let override_active = self.override_is_live();
-                            let (
-                                act,
-                                cat,
-                                tname,
-                                st,
-                                d_status,
-                                d_ms,
-                                d_err,
-                                d_steps,
-                                m_steps,
-                                apply_ms,
-                            ) = self
-                                .apply_tasks(
+                            applied = Some(
+                                self.apply_tasks(
                                     &tools,
                                     client,
                                     request_id,
                                     override_active,
                                     options,
+                                    "apply_tool_sequence",
                                     &mut trace,
                                 )
-                                .await;
-                            action_taken = act;
-                            category = cat;
-                            tool_name = tname;
-                            new_state = st;
-                            drone_http_status = d_status;
-                            drone_http_ms = d_ms;
-                            drone_error = d_err;
-                            drone_steps = d_steps;
-                            model_steps = m_steps;
-                            apply_total_ms = Some(apply_ms);
+                                .await,
+                            );
                         }
                     }
                 }
@@ -662,6 +595,19 @@ impl Orchestrator {
                 );
                 action_taken = "status_only".to_string();
             }
+        }
+
+        if let Some(a) = applied {
+            action_taken = a.action_taken;
+            category = a.category;
+            tool_name = a.tool_name;
+            new_state = a.state;
+            drone_http_status = a.drone_http_status;
+            drone_http_ms = a.drone_http_ms;
+            drone_error = a.drone_error;
+            drone_steps = a.drone_steps;
+            model_steps = a.model_steps;
+            apply_total_ms = Some(a.apply_total_ms);
         }
 
         let latency_ms = start.elapsed().as_millis() as u64;
