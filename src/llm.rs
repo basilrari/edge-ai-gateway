@@ -169,17 +169,6 @@ struct TasksEnvelope {
     tasks: Vec<ToolCall>,
 }
 
-/// Map legacy none `name` values to the single contract reason.
-pub fn normalize_none_reason(reason: &str) -> String {
-    match reason {
-        NONE_REASON_INVALID => NONE_REASON_INVALID.to_string(),
-        "greeting_only" | "ambiguous_request" | "informational_request" | "unsafe_or_invalid" => {
-            NONE_REASON_INVALID.to_string()
-        }
-        _ => reason.to_string(),
-    }
-}
-
 /// Strip optional Markdown fences so models that wrap JSON in ` ```json ` blocks still parse.
 pub fn extract_json_tool_payload(raw_text: &str) -> String {
     let s = raw_text.trim();
@@ -221,14 +210,11 @@ fn parse_tool_sequence_inner(cleaned: &str) -> Result<LlmToolPayload, serde_json
         }
         for t in &out {
             if t.category == "none" {
-                return Ok(LlmToolPayload::NoneReason(normalize_none_reason(&t.name)));
+                return Ok(LlmToolPayload::NoneReason(t.name.clone()));
             }
             if t.category != "drone" && t.category != "model" {
                 return Ok(LlmToolPayload::NoneReason(NONE_REASON_INVALID.into()));
             }
-        }
-        if out.is_empty() {
-            return Ok(LlmToolPayload::NoneReason(NONE_REASON_INVALID.into()));
         }
         return Ok(LlmToolPayload::Tasks(out));
     }
@@ -274,6 +260,15 @@ mod tests {
         let raw = r#"{"tasks":[{"category":"none","name":"invalid_request"}]}"#;
         match parse_tool_sequence(raw).unwrap() {
             LlmToolPayload::NoneReason(r) => assert_eq!(r, "invalid_request"),
+            _ => panic!("expected none reason"),
+        }
+    }
+
+    #[test]
+    fn none_name_is_not_remapped() {
+        let raw = r#"{"tasks":[{"category":"none","name":"greeting_only"}]}"#;
+        match parse_tool_sequence(raw).unwrap() {
+            LlmToolPayload::NoneReason(r) => assert_eq!(r, "greeting_only"),
             _ => panic!("expected none reason"),
         }
     }

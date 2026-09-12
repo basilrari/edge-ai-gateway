@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use crate::config;
 use crate::drone_params::{normalize_drone_tasks, tasks_display_json};
-use crate::llm::{normalize_none_reason, LlmToolPayload};
+use crate::llm::LlmToolPayload;
 use crate::llm_decision::run_llm_tool_decision;
 use crate::server::{pick_request_id, AppState};
 use crate::timing::unix_ms_now;
@@ -119,7 +119,6 @@ pub async fn eval_handler(
     } else if let Some(tool_res) = dec.tool_payload {
         match tool_res {
             Ok(LlmToolPayload::NoneReason(reason)) => {
-                let reason = normalize_none_reason(&reason);
                 json_valid = true;
                 none_reason = Some(reason.clone());
                 let canon = serde_json::json!({ "tasks": [{ "category": "none", "name": reason }] })

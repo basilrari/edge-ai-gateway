@@ -39,12 +39,6 @@ pub fn normalize_drone_tool_params(
             let v = obj.get("alt_m").and_then(|x| x.as_f64());
             set_alt_key(&mut obj, "alt_m", altitude_above_home(v));
         }
-        "waypoint_inject" => {
-            if obj.contains_key("lat_deg") && obj.contains_key("lon_deg") {
-                let v = obj.get("alt_m").and_then(|x| x.as_f64());
-                set_alt_key(&mut obj, "alt_m", altitude_above_home(v));
-            }
-        }
         _ => {}
     }
 
@@ -95,6 +89,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out["alt_m"], 15.0);
+    }
+
+    #[test]
+    fn unknown_tool_params_unchanged() {
+        let out = normalize_drone_tool_params(
+            "waypoint_inject",
+            Some(json!({ "lat_deg": 1.0, "lon_deg": 2.0 })),
+        )
+        .unwrap();
+        assert!(out.get("alt_m").is_none());
+        assert_eq!(out["lat_deg"], 1.0);
     }
 
     #[test]
