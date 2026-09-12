@@ -327,7 +327,6 @@ impl Orchestrator {
         let mut llm_response = String::new();
         let mut category: Option<String> = None;
         let mut tool_name: Option<String> = None;
-        let mut pending_approval = false;
         let mut drone_http_status: Option<u16> = None;
         let mut drone_http_ms: Option<u64> = None;
         let mut drone_error: Option<String> = None;
@@ -745,7 +744,7 @@ impl Orchestrator {
             llm_response,
             category,
             tool_name,
-            pending_approval,
+            pending_approval: false,
             drone_http_status,
             drone_http_ms,
             drone_error,
@@ -756,9 +755,6 @@ impl Orchestrator {
             pipeline,
             drone_steps,
             model_steps,
-            llm_http_ms,
-            llm_parse_ms,
-            apply_total_ms,
         }
     }
 }

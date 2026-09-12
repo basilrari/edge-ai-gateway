@@ -219,7 +219,4 @@ pub struct CommandOutcome {
     pub pipeline: Option<PipelineTiming>,
     pub drone_steps: Vec<DroneStepTiming>,
     pub model_steps: Vec<ModelStepTiming>,
-    pub llm_http_ms: u64,
-    pub llm_parse_ms: u64,
-    pub apply_total_ms: Option<u64>,
 }
