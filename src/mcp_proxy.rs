@@ -3,7 +3,8 @@
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{header, Method, StatusCode},
+    middleware::Next,
     response::{IntoResponse, Response},
 };
 use futures_util::StreamExt;
@@ -50,18 +51,37 @@ fn mcp_disabled() -> Response {
         .into_response()
 }
 
+/// Same check as `/mcp/*`: `MCP_API_KEY` via Bearer or `X-API-Key`. 503 if unset; 401 if mismatch.
+pub(crate) fn require_mcp_api_key(
+    headers: &axum::http::HeaderMap,
+) -> Result<(), Response> {
+    let expected = match config::mcp_api_key() {
+        Some(k) if !k.is_empty() => k,
+        _ => return Err(mcp_disabled()),
+    };
+    if extract_bearer(headers).as_deref() != Some(expected.as_str()) {
+        return Err(unauthorized());
+    }
+    Ok(())
+}
+
+pub async fn require_mcp_api_key_mw(req: Request, next: Next) -> Response {
+    if req.method() == Method::OPTIONS {
+        return next.run(req).await;
+    }
+    match require_mcp_api_key(req.headers()) {
+        Ok(()) => next.run(req).await,
+        Err(resp) => resp,
+    }
+}
+
 pub async fn mcp_proxy_handler(
     State(state): State<AppState>,
     req: Request,
 ) -> Result<Response, StatusCode> {
-    let expected = match config::mcp_api_key() {
-        Some(k) if !k.is_empty() => k,
-        _ => return Ok(mcp_disabled()),
-    };
-
     let (parts, body) = req.into_parts();
-    if extract_bearer(&parts.headers).as_deref() != Some(expected.as_str()) {
-        return Ok(unauthorized());
+    if let Err(resp) = require_mcp_api_key(&parts.headers) {
+        return Ok(resp);
     }
 
     let path = parts.uri.path();

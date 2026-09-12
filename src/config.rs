@@ -145,11 +145,39 @@ pub fn client_dispatch_ms_from_headers(headers: &axum::http::HeaderMap) -> Optio
         .and_then(|s| s.parse().ok())
 }
 
+/// HTTP bind. Default loopback; set `GATEWAY_BIND` (e.g. `0.0.0.0:3000`) to override.
+pub fn listen_addr() -> std::net::SocketAddr {
+    std::env::var("GATEWAY_BIND")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| "127.0.0.1:3000".parse().expect("default GATEWAY_BIND"))
+}
+
+/// `None` (unset) → wait for ACK. Explicit `0` / `false` disables.
+pub fn ack_env_enabled(val: Option<&str>) -> bool {
+    match val {
+        None => true,
+        Some(v) => v == "1" || v.eq_ignore_ascii_case("true"),
+    }
+}
+
 /// When true, infer/apply waits for FC `COMMAND_ACK` on each drone step (via drone-http).
 pub fn drone_wait_for_ack_default() -> bool {
-    std::env::var("DRONE_WAIT_FOR_ACK")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+    ack_env_enabled(std::env::var("DRONE_WAIT_FOR_ACK").ok().as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ack_env_enabled;
+
+    #[test]
+    fn ack_default_on_when_unset() {
+        assert!(ack_env_enabled(None));
+        assert!(ack_env_enabled(Some("true")));
+        assert!(ack_env_enabled(Some("1")));
+        assert!(!ack_env_enabled(Some("false")));
+        assert!(!ack_env_enabled(Some("0")));
+    }
 }
 
 pub fn drone_ack_timeout_ms_default() -> u64 {

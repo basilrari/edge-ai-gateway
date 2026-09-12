@@ -175,6 +175,29 @@ pub struct ApiResponse {
     pub model_steps: Vec<ModelStepTiming>,
 }
 
+/// Infer/parse/LLM failures the UI must not treat as a successful send.
+pub fn infer_failure_action(action_taken: &str) -> bool {
+    action_taken == "parse_failed"
+        || action_taken.starts_with("tool_parse_failed")
+        || action_taken.contains("llm_http_failed")
+        || action_taken.contains("llm_parse_failed")
+}
+
+#[cfg(test)]
+mod infer_failure_tests {
+    use super::infer_failure_action;
+
+    #[test]
+    fn flags_parse_and_llm_failures() {
+        assert!(infer_failure_action("parse_failed"));
+        assert!(infer_failure_action("tool_parse_failed: eof"));
+        assert!(infer_failure_action("llm_http_failed_fallback_text"));
+        assert!(infer_failure_action("llm_parse_failed_fallback_text"));
+        assert!(!infer_failure_action("drone_http_ok:arm"));
+        assert!(!infer_failure_action("invalid_request"));
+    }
+}
+
 /// Result of [`crate::orchestrator::Orchestrator::process_command`].
 #[derive(Debug)]
 pub struct CommandOutcome {
