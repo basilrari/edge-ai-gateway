@@ -412,12 +412,7 @@ impl Orchestrator {
                                 trace.push(format!("stage=infer_auto_apply steps={}", tasks.len()));
                                 let a = self
                                     .apply_tasks(
-                                        &tasks,
-                                        client,
-                                        request_id,
-                                        options,
-                                        "infer",
-                                        &mut trace,
+                                        &tasks, client, request_id, options, "infer", &mut trace,
                                     )
                                     .await;
                                 info!(
