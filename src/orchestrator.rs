@@ -368,7 +368,7 @@ impl Orchestrator {
                             error = %e,
                             reason = "HTTP request to LLM failed"
                         );
-                        action_taken = "llm_http_failed_fallback_text".to_string();
+                        action_taken = "llm_http_failed".to_string();
                     } else if dec.chat_parse_error.is_some() {
                         let e = dec.chat_parse_error.as_deref().unwrap_or("");
                         warn!(
@@ -379,7 +379,7 @@ impl Orchestrator {
                             error = %e,
                             reason = "failed to parse LLM envelope"
                         );
-                        action_taken = "llm_parse_failed_fallback_text".to_string();
+                        action_taken = "llm_parse_failed".to_string();
                     } else if let Some(tool_res) = dec.tool_payload {
                         let status = dec.http_status.unwrap_or(0);
                         match tool_res {

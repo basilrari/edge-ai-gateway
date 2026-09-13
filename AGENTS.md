@@ -151,7 +151,7 @@ Optional **`params`** (object) for tools that need structured arguments, e.g. `g
 | `override_active` | bool   | Whether an override is active. |
 | `category`        | string \| null | First step category when Infer ran: `"drone"` or `"model"` (for display / single-step ApplyTool). |
 | `tool_name`       | string \| null | First step tool name (e.g. `"goto_location"`, `"human_detect"`). |
-| `pending_approval` | bool   | Always **`false`** today — Infer **auto-applies** drone/model tools via `infer_auto_apply`. Field kept for API compatibility. |
+| `pending_approval` | bool   | When **`true`**, the LLM proposed drone/model step(s) and the client should show an **approval UI** before calling **ApplyTool** / **ApplyToolSequence**. Today Infer **auto-applies** and returns **`false`**; the field is kept for a future approve-then-apply flow. |
 | `tools`           | array \| omitted | When the LLM proposed **multiple** steps, ordered `{ "category", "name", "params"? }` objects (max 5). |
 | `tool_params`     | object \| omitted | Params for the **first** step when needed (e.g. `goto_location`); also sent with **ApplyTool** on Accept. |
 | `llm_response`    | string | Raw LLM response body (or error message). |

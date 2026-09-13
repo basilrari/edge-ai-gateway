@@ -191,8 +191,8 @@ mod infer_failure_tests {
     fn flags_parse_and_llm_failures() {
         assert!(infer_failure_action("parse_failed"));
         assert!(infer_failure_action("tool_parse_failed: eof"));
-        assert!(infer_failure_action("llm_http_failed_fallback_text"));
-        assert!(infer_failure_action("llm_parse_failed_fallback_text"));
+        assert!(infer_failure_action("llm_http_failed"));
+        assert!(infer_failure_action("llm_parse_failed"));
         assert!(!infer_failure_action("drone_http_ok:arm"));
         assert!(!infer_failure_action("invalid_request"));
     }
