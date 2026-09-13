@@ -42,6 +42,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/drone/mission/upload", post(drone_mission_upload_handler))
         .route("/drone/mission/clear", post(drone_mission_clear_handler))
         .route("/drone/logs/clear", post(drone_logs_clear_handler))
+        .route("/logs/llm/clear", post(llm_logs_clear_handler))
+        .route("/logs/clear-all", post(logs_clear_all_handler))
         .route_layer(middleware::from_fn(
             crate::mcp_proxy::require_mcp_api_key_mw,
         ));
@@ -55,8 +57,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/drone/logs/mavlink", get(drone_mavlink_logs_handler))
         .route("/drone/logs/ws", get(drone_logs_ws_handler))
         .route("/logs/llm", get(llm_logs_handler))
-        .route("/logs/llm/clear", post(llm_logs_clear_handler))
-        .route("/logs/clear-all", post(logs_clear_all_handler))
         .route("/camera/stream", get(camera_stream_handler))
         .route("/camera/webrtc/ice", get(camera_webrtc_ice_handler))
         .route("/camera/webrtc/offer", post(camera_webrtc_offer_handler))
