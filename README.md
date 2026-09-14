@@ -62,6 +62,6 @@ Response: JSON with **state**, **model**, **override_active**, **category**, **t
 ## Tool Names (reference)
 
 - **Model**: `human_detect`, `flood_seg`, `flood_class` (short names; see `llm.rs` system prompt).
-- **Drone**: `arm`, `disarm`, `takeoff`, `goto_location`, `start_mission`, `mission_set_current`, `mission_interrupt`, `mission_resume`, `return_to_home`, `land_immediately`, `hover`, `set_mode_guided`, `set_mode_auto` (full list in `SAR_SYSTEM_PROMPT` in `src/llm.rs`; drone-http may expose additional tools not offered to the LLM).
+- **Drone**: `arm`, `disarm`, `takeoff`, `goto_location`, `start_mission`, `set_current_waypoint`, `pause`, `resume`, `return_to_home`, `land`, `hover`, `set_mode_guided`, `set_mode_auto` (full list in `SAR_SYSTEM_PROMPT` in `src/llm.rs`; drone-http may expose additional tools not offered to the LLM).
 
 For full request/response contracts and examples for frontend or agent use, see **AGENTS.md**.
