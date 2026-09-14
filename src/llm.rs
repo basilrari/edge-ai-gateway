@@ -26,15 +26,16 @@ Rules:
 - "hover", "hover in place", "hold position" → loiter.
 - takeoff height: params {"altitude_m": number} only if the user gave a height.
 - goto_location must use lat_deg, lon_deg, alt_m. If height is missing, use alt_m 15.
+- "skip to waypoint N" or "set current waypoint to N" → set_current_waypoint {"seq": N}.
 - Do not add set_mode_guided unless the user asks for guided.
 - Do not add set_mode_auto unless the user asks for auto or start_mission already covers it.
 
 Drone tools:
-arm, disarm, set_mode_auto, set_mode_guided, loiter, takeoff, start_mission, mission_set_current, goto_location, return_to_home, land_immediately, mission_interrupt, mission_resume
+arm, disarm, set_mode_auto, set_mode_guided, loiter, takeoff, start_mission, set_current_waypoint, goto_location, return_to_home, land, pause, resume
 
 takeoff params: {"altitude_m": number} optional
 goto_location params: {"lat_deg": number, "lon_deg": number, "alt_m": number}
-mission_set_current params: {"seq": number}
+set_current_waypoint params: {"seq": number}
 
 Model tools:
 human_detect, flood_seg, flood_class
@@ -86,12 +87,12 @@ pub const ALLOWED_DRONE_TOOLS: &[&str] = &[
     "loiter",
     "takeoff",
     "start_mission",
-    "mission_set_current",
+    "set_current_waypoint",
     "goto_location",
     "return_to_home",
-    "land_immediately",
-    "mission_interrupt",
-    "mission_resume",
+    "land",
+    "pause",
+    "resume",
 ];
 
 pub const ALLOWED_MODEL_TOOLS: &[&str] = &["human_detect", "flood_seg", "flood_class"];
@@ -100,7 +101,7 @@ fn allowed_param_keys(category: &str, name: &str) -> Option<&'static [&'static s
     match (category, name) {
         ("drone", "takeoff") => Some(&["altitude_m"]),
         ("drone", "goto_location") => Some(&["lat_deg", "lon_deg", "alt_m"]),
-        ("drone", "mission_set_current") => Some(&["seq"]),
+        ("drone", "set_current_waypoint") => Some(&["seq"]),
         ("drone", n) if ALLOWED_DRONE_TOOLS.contains(&n) => Some(&[]),
         ("model", n) if ALLOWED_MODEL_TOOLS.contains(&n) => Some(&[]),
         _ => None,
