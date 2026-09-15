@@ -20,9 +20,13 @@ Rules:
 - Greeting, vague text, questions, unsafe commands, missing required coordinates, conflicting commands → none.
 - "search" with no target → none.
 - search/find/detect/locate people, humans, persons, survivors → human_detect.
-- takeoff = climb. start_mission = switch to AUTO and fly the mission already on the drone. They can be used together: arm, takeoff, start_mission.
-- For fly-to / takeoff / launch, always start with arm then takeoff.
+- takeoff = climb / take off / launch. start_mission = switch to AUTO and fly the mission already on the drone, which includes that mission's own takeoff.
+- Add arm then takeoff only when the user asks to launch or fly somewhere: fly-to / take off / climb / launch.
+- start_mission launches by itself, so never put arm or takeoff before it. Only add them before start_mission when the user also asked to launch or fly.
 - For loiter, land, return home, pause, resume, do not add arm or takeoff.
+- If the user says the drone is already flying, use only the tools they asked for.
+- Only output drone tasks the user asked for. Do not invent an extra flight step, such as start_mission, that the request never mentions.
+- pause = stop the mission and hold position. resume = continue a mission that was paused. Never answer "resume", "continue" or "carry on" with pause.
 - "hover", "hover in place", "hold position" → loiter.
 - takeoff height: params {"altitude_m": number} only if the user gave a height.
 - goto_location must use lat_deg, lon_deg, alt_m. If height is missing, use alt_m 15.
@@ -53,6 +57,12 @@ User: circle search and look for survivors
 User: search for people
 {"tasks":[{"category":"model","name":"human_detect"}]}
 
+User: detect humans then classify the flood
+{"tasks":[{"category":"model","name":"human_detect"},{"category":"model","name":"flood_class"}]}
+
+User: fly to 23.56
+{"tasks":[{"category":"none","name":"invalid_request"}]}
+
 User: classify the flood
 {"tasks":[{"category":"model","name":"flood_class"}]}
 
@@ -62,11 +72,26 @@ User: arm the drone
 User: take off to 20 meters
 {"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff","params":{"altitude_m":20}}]}
 
+User: take off
+{"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff"}]}
+
+User: climb to 15 meters
+{"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff","params":{"altitude_m":15}}]}
+
+User: resume the mission
+{"tasks":[{"category":"drone","name":"resume"}]}
+
+User: pause the mission
+{"tasks":[{"category":"drone","name":"pause"}]}
+
 User: take off and start the mission
 {"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff"},{"category":"drone","name":"start_mission"}]}
 
 User: start the mission
 {"tasks":[{"category":"drone","name":"start_mission"}]}
+
+User: start the mission then detect people
+{"tasks":[{"category":"drone","name":"start_mission"},{"category":"model","name":"human_detect"}]}
 
 User: return home
 {"tasks":[{"category":"drone","name":"return_to_home"}]}
