@@ -195,9 +195,44 @@ struct TasksEnvelope {
     tasks: Vec<ToolCall>,
 }
 
-/// Strip optional Markdown fences so models that wrap JSON in ` ```json ` blocks still parse.
+/// Closing markers a reasoning model may use to end its chain of thought.
+///
+/// Spelled from characters rather than literals, because both an ASCII form and
+/// the full-width Qwen form are in use and literals here are easy to mangle.
+fn reasoning_close_markers() -> [String; 2] {
+    let ascii: String = ['<', '/', 't', 'h', 'i', 'n', 'k', '>'].iter().collect();
+    let wide: String = [
+        '\u{3C}', '\u{FF5C}', 'e', 'n', 'd', '\u{2581}', 'o', 'f', '\u{2581}', 't', 'h', 'i',
+        'n', 'k', 'i', 'n', 'g', '\u{FF5C}', '\u{3E}',
+    ]
+    .iter()
+    .collect();
+    [ascii, wide]
+}
+
+/// Drop a reasoning block so a thinking model parses like an instruct model.
+///
+/// Reasoning models emit their chain of thought before the answer. Only a closed
+/// block is dropped: if the block is still open the generation was cut off
+/// mid-thought, and the missing JSON is a real parse failure, not a formatting one.
+fn strip_reasoning(s: &str) -> &str {
+    let mut end = 0;
+    for marker in reasoning_close_markers() {
+        if let Some(i) = s.rfind(marker.as_str()) {
+            end = end.max(i + marker.len());
+        }
+    }
+    if end == 0 {
+        s
+    } else {
+        s[end..].trim_start()
+    }
+}
+
+/// Strip optional Markdown fences and reasoning blocks so models that wrap JSON in
+/// ` ```json ` blocks, or think before answering, still parse.
 pub fn extract_json_tool_payload(raw_text: &str) -> String {
-    let s = raw_text.trim();
+    let s = strip_reasoning(raw_text.trim());
     if let Some(pos) = s.find("```") {
         let after_fence = &s[pos + 3..];
         let after_fence = after_fence
@@ -282,8 +317,26 @@ mod tests {
     }
 
     #[test]
-    fn parses_none_in_tasks() {
-        let raw = r#"{"tasks":[{"category":"none","name":"invalid_request"}]}"#;
+    fn parses_tasks_after_a_reasoning_block() {
+        // Spelled from chars so this test needs no angle-bracket literal.
+        let close = &reasoning_close_markers()[0];
+        let raw = format!(
+            "The user wants to arm.\n{close}{{\"tasks\":[{{\"category\":\"drone\",\"name\":\"arm\"}}]}}"
+        );
+        match parse_tool_sequence(&raw).unwrap() {
+            LlmToolPayload::Tasks(t) => assert_eq!(t.len(), 1),
+            _ => panic!("expected tasks"),
+        }
+    }
+
+    #[test]
+    fn unterminated_reasoning_is_still_a_parse_error() {
+        let raw = "\nThe user wants to arm, but I ran out of";
+        assert!(parse_tool_sequence(raw).is_err());
+    }
+
+    #[test]
+    fn parses_none_in_tasks() {        let raw = r#"{"tasks":[{"category":"none","name":"invalid_request"}]}"#;
         match parse_tool_sequence(raw).unwrap() {
             LlmToolPayload::NoneReason(r) => assert_eq!(r, "invalid_request"),
             _ => panic!("expected none reason"),
