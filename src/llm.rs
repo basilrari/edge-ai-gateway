@@ -20,9 +20,13 @@ Rules:
 - Greeting, vague text, questions, unsafe commands, missing required coordinates, conflicting commands → none.
 - "search" with no target → none.
 - search/find/detect/locate people, humans, persons, survivors → human_detect.
-- takeoff = climb. start_mission = switch to AUTO and fly the mission already on the drone. They can be used together: arm, takeoff, start_mission.
-- For fly-to / takeoff / launch, always start with arm then takeoff.
+- takeoff = climb / take off / launch. start_mission = switch to AUTO and fly the mission already on the drone, which includes that mission's own takeoff.
+- Add arm then takeoff only when the user asks to launch or fly somewhere: fly-to / take off / climb / launch.
+- start_mission launches by itself, so never put arm or takeoff before it. Only add them before start_mission when the user also asked to launch or fly.
 - For loiter, land, return home, pause, resume, do not add arm or takeoff.
+- If the user says the drone is already flying, use only the tools they asked for.
+- Only output drone tasks the user asked for. Do not invent an extra flight step, such as start_mission, that the request never mentions.
+- pause = stop the mission and hold position. resume = continue a mission that was paused. Never answer "resume", "continue" or "carry on" with pause.
 - "hover", "hover in place", "hold position" → loiter.
 - takeoff height: params {"altitude_m": number} only if the user gave a height.
 - goto_location must use lat_deg, lon_deg, alt_m. If height is missing, use alt_m 15.
@@ -53,6 +57,12 @@ User: circle search and look for survivors
 User: search for people
 {"tasks":[{"category":"model","name":"human_detect"}]}
 
+User: detect humans then classify the flood
+{"tasks":[{"category":"model","name":"human_detect"},{"category":"model","name":"flood_class"}]}
+
+User: fly to 23.56
+{"tasks":[{"category":"none","name":"invalid_request"}]}
+
 User: classify the flood
 {"tasks":[{"category":"model","name":"flood_class"}]}
 
@@ -62,11 +72,26 @@ User: arm the drone
 User: take off to 20 meters
 {"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff","params":{"altitude_m":20}}]}
 
+User: take off
+{"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff"}]}
+
+User: climb to 15 meters
+{"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff","params":{"altitude_m":15}}]}
+
+User: resume the mission
+{"tasks":[{"category":"drone","name":"resume"}]}
+
+User: pause the mission
+{"tasks":[{"category":"drone","name":"pause"}]}
+
 User: take off and start the mission
 {"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff"},{"category":"drone","name":"start_mission"}]}
 
 User: start the mission
 {"tasks":[{"category":"drone","name":"start_mission"}]}
+
+User: start the mission then detect people
+{"tasks":[{"category":"drone","name":"start_mission"},{"category":"model","name":"human_detect"}]}
 
 User: return home
 {"tasks":[{"category":"drone","name":"return_to_home"}]}
@@ -170,9 +195,44 @@ struct TasksEnvelope {
     tasks: Vec<ToolCall>,
 }
 
-/// Strip optional Markdown fences so models that wrap JSON in ` ```json ` blocks still parse.
+/// Closing markers a reasoning model may use to end its chain of thought.
+///
+/// Spelled from characters rather than literals, because both an ASCII form and
+/// the full-width Qwen form are in use and literals here are easy to mangle.
+fn reasoning_close_markers() -> [String; 2] {
+    let ascii: String = ['<', '/', 't', 'h', 'i', 'n', 'k', '>'].iter().collect();
+    let wide: String = [
+        '\u{3C}', '\u{FF5C}', 'e', 'n', 'd', '\u{2581}', 'o', 'f', '\u{2581}', 't', 'h', 'i',
+        'n', 'k', 'i', 'n', 'g', '\u{FF5C}', '\u{3E}',
+    ]
+    .iter()
+    .collect();
+    [ascii, wide]
+}
+
+/// Drop a reasoning block so a thinking model parses like an instruct model.
+///
+/// Reasoning models emit their chain of thought before the answer. Only a closed
+/// block is dropped: if the block is still open the generation was cut off
+/// mid-thought, and the missing JSON is a real parse failure, not a formatting one.
+fn strip_reasoning(s: &str) -> &str {
+    let mut end = 0;
+    for marker in reasoning_close_markers() {
+        if let Some(i) = s.rfind(marker.as_str()) {
+            end = end.max(i + marker.len());
+        }
+    }
+    if end == 0 {
+        s
+    } else {
+        s[end..].trim_start()
+    }
+}
+
+/// Strip optional Markdown fences and reasoning blocks so models that wrap JSON in
+/// ` ```json ` blocks, or think before answering, still parse.
 pub fn extract_json_tool_payload(raw_text: &str) -> String {
-    let s = raw_text.trim();
+    let s = strip_reasoning(raw_text.trim());
     if let Some(pos) = s.find("```") {
         let after_fence = &s[pos + 3..];
         let after_fence = after_fence
@@ -257,8 +317,26 @@ mod tests {
     }
 
     #[test]
-    fn parses_none_in_tasks() {
-        let raw = r#"{"tasks":[{"category":"none","name":"invalid_request"}]}"#;
+    fn parses_tasks_after_a_reasoning_block() {
+        // Spelled from chars so this test needs no angle-bracket literal.
+        let close = &reasoning_close_markers()[0];
+        let raw = format!(
+            "The user wants to arm.\n{close}{{\"tasks\":[{{\"category\":\"drone\",\"name\":\"arm\"}}]}}"
+        );
+        match parse_tool_sequence(&raw).unwrap() {
+            LlmToolPayload::Tasks(t) => assert_eq!(t.len(), 1),
+            _ => panic!("expected tasks"),
+        }
+    }
+
+    #[test]
+    fn unterminated_reasoning_is_still_a_parse_error() {
+        let raw = "\nThe user wants to arm, but I ran out of";
+        assert!(parse_tool_sequence(raw).is_err());
+    }
+
+    #[test]
+    fn parses_none_in_tasks() {        let raw = r#"{"tasks":[{"category":"none","name":"invalid_request"}]}"#;
         match parse_tool_sequence(raw).unwrap() {
             LlmToolPayload::NoneReason(r) => assert_eq!(r, "invalid_request"),
             _ => panic!("expected none reason"),
