@@ -51,7 +51,11 @@ pub async fn run_llm_tool_decision(
             },
         ],
         temperature: 0.0,
-        max_tokens: 256,
+        // 256 truncated reasoning models: they spend the whole budget on the chain of
+        // thought and return empty content. Instruct models answer in under 200 tokens,
+        // so a larger cap only affects responses that would otherwise be cut off.
+        // Budgeted against the 120s timeout below: slowest measured decode is ~27 tok/s.
+        max_tokens: 2048,
     };
 
     let llm_start = Instant::now();
