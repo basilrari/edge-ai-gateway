@@ -6,6 +6,8 @@ Local measurement of candidate GGUFs against the 150-case `bench_v1` set, scored
 
 The 0.8B Qwen stays on disk as a smaller fallback. The other sweep GGUFs (MiniCPM5, LFM2.5) were deleted after this write-up.
 
+Machine-readable copy of the same numbers: [llm-bench-v1-scores.json](llm-bench-v1-scores.json). Use the `qwen_08b_vs_2b_use_this_pair` object for 0.8B vs 2B — those two rows are the same harness.
+
 ## Protocol
 
 - Corpus: 150 cases (`simple` 50, `multi-step` 60, `reject` 40).
@@ -55,9 +57,20 @@ Replayed at 2048 / 3072 / 4096 tokens: byte-identical, `finish=stop`. Not a toke
 
 Qwen 2B: `json_valid` 126/150, FC 91/92, explicit refusals, no extra llama.cpp patch. That is the production trade.
 
-## 0.8B
+## 0.8B vs 2B (same harness: sweep 3)
 
-Kept locally (`Qwen3.6-0.8B-Q5_K_M.gguf`) as a smaller, faster model. Gold 78/150 in sweep 3, weak on multi-step (24/60). Not a substitute for 2B on this prompt.
+| | Qwen3.6-0.8B Q5 | Qwen3.5-2B Q5 | 2B − 0.8B |
+|---|---:|---:|---:|
+| gold | 78/150 | 123/150 | +45 |
+| simple | 38/50 | 48/50 | +10 |
+| multi-step | 24/60 | 53/60 | +29 |
+| reject | 16/40 | 22/40 | +6 |
+| json_valid | 116/150 | 127/150 | +11 |
+| FC | 80/92 | 91/92 | +11 |
+| prefill tok/s (cold) | 1243.7 | 1063.1 | 2B slower |
+| decode tok/s (cold) | 36.8 | 27.5 | 2B slower |
+
+The gap is multi-step. 0.8B run-to-run on this box was 82 → 81 → 78; 2B was 123 then 124. Treat ±4 as noise; +45 is not. 0.8B file kept: `Qwen3.6-0.8B-Q5_K_M.gguf`.
 
 ## Serving notes
 

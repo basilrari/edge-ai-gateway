@@ -1,0 +1,115 @@
+{
+  "corpus": "bench_v1",
+  "cases": 150,
+  "splits": {"simple": 50, "multi-step": 60, "reject": 40},
+  "gold": "full_match (tool name + args)",
+  "fc": "drone-tool cases the flight controller accepted",
+  "host": "Jetson, llama.cpp b8185, ctx 16384, production /infer",
+  "canonical_runs": [
+    {
+      "tag": "qwen35_2b_q5",
+      "file": "Qwen3.5-2B-Q5_K_M.gguf",
+      "run": "sweep3",
+      "gold": 123, "simple": 48, "multi": 53, "reject": 22,
+      "json_valid": 127, "fc_ok": 91, "fc_n": 92,
+      "prefill_tok_s": 1063.1, "decode_tok_s": 27.5,
+      "max_tokens": 256, "notes": "default template; serving choice"
+    },
+    {
+      "tag": "qwen35_2b_q5",
+      "file": "Qwen3.5-2B-Q5_K_M.gguf",
+      "run": "sweep4_control",
+      "gold": 124, "simple": 48, "multi": 53, "reject": 23,
+      "json_valid": 126, "fc_ok": 91, "fc_n": 92,
+      "prefill_tok_s": 1064.6, "decode_tok_s": 27.4,
+      "max_tokens": 2048, "notes": "engine control after local MiniCPM5 vocab patch; +1 vs sweep3 is noise"
+    },
+    {
+      "tag": "qwen36_08b_q5",
+      "file": "Qwen3.6-0.8B-Q5_K_M.gguf",
+      "run": "sweep3",
+      "gold": 78, "simple": 38, "multi": 24, "reject": 16,
+      "json_valid": 116, "fc_ok": 80, "fc_n": 92,
+      "prefill_tok_s": 1243.7, "decode_tok_s": 36.8,
+      "max_tokens": 256, "notes": "same harness as sweep3 2B; use this pair for 0.8B vs 2B"
+    },
+    {
+      "tag": "qwen36_08b_q5",
+      "file": "Qwen3.6-0.8B-Q5_K_M.gguf",
+      "run": "earlier_same_config",
+      "gold": 82, "simple": 39, "multi": 28, "reject": 15,
+      "json_valid": 120, "fc_ok": 83, "fc_n": 92,
+      "notes": "run-to-run noise on 0.8B: 82 then 81 then 78"
+    },
+    {
+      "tag": "qwen36_08b_q5",
+      "file": "Qwen3.6-0.8B-Q5_K_M.gguf",
+      "run": "sweep2",
+      "gold": 81, "simple": 40, "multi": 24, "reject": 17,
+      "json_valid": 116, "fc_ok": 79, "fc_n": 92,
+      "notes": "enable_thinking=false applied globally; slightly perturbs Qwen"
+    },
+    {
+      "tag": "minicpm5_1b_q4",
+      "file": "MiniCPM5-1B-Q4_K_M.gguf",
+      "run": "sweep3",
+      "gold": 71, "simple": 26, "multi": 9, "reject": 36,
+      "json_valid": 66, "fc_ok": 77, "fc_n": 92,
+      "prefill_tok_s": 2364.7, "decode_tok_s": 56.3,
+      "flags": "enable_thinking=false",
+      "notes": "default template returns empty content (reasoning eats the budget). Reject score is mostly silence mapped to invalid_request. GGUF deleted after this run."
+    },
+    {
+      "tag": "minicpm5_2b_q4",
+      "file": "MiniCPM5-2B-Q4_K_M.gguf",
+      "run": "sweep4",
+      "gold": 133, "simple": 45, "multi": 53, "reject": 35,
+      "json_valid": 104, "fc_ok": 86, "fc_n": 92,
+      "prefill_tok_s": 1207.8, "decode_tok_s": 31.9,
+      "max_tokens": 2048,
+      "notes": "needed llama.cpp minicpm5 pre-tokenizer patch. Highest gold. All 35 reject passes were empty output, not explicit invalid_request. Four goto_location chains emit extra }. GGUF deleted after this run."
+    },
+    {
+      "tag": "lfm25_12b_instruct_q4",
+      "file": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+      "run": "sweep3",
+      "gold": 43, "simple": 10, "multi": 3, "reject": 30,
+      "json_valid": 58, "fc_ok": 68, "fc_n": 92,
+      "prefill_tok_s": 2285.8, "decode_tok_s": 63.4,
+      "notes": "not viable as a tool-caller. GGUF deleted after this run."
+    },
+    {
+      "tag": "lfm25_12b_thinking_q4",
+      "file": "LFM2.5-1.2B-Thinking-Q4_K_M.gguf",
+      "run": "sweep4",
+      "gold": 47, "simple": 5, "multi": 5, "reject": 37,
+      "json_valid": 22, "fc_ok": 28, "fc_n": 92,
+      "prefill_tok_s": 2231.8, "decode_tok_s": 63.1,
+      "max_tokens": 2048,
+      "notes": "unusable at max_tokens 256 (empty content). At 2048, systematically emits }}} instead of ]}. Reject 37/40 is silence. GGUF deleted after this run."
+    },
+    {
+      "tag": "lfm25_8b_a1b_q4",
+      "file": "LFM2.5-8B-A1B-Q4_K_M.gguf",
+      "run": "sweep3",
+      "ok": false,
+      "error": "cudaMalloc 4908 MiB failed on 16 GB unified memory",
+      "notes": "GGUF deleted after this run."
+    }
+  ],
+  "do_not_use": [
+    {
+      "tag": "minicpm5_1b_q4",
+      "run": "sweep1_bogus",
+      "gold": 40,
+      "json_valid": 2,
+      "notes": "thinking ate the 256-token budget; 39/40 reject was empty-output artifact"
+    }
+  ],
+  "qwen_08b_vs_2b_use_this_pair": {
+    "same_harness": "sweep3",
+    "qwen08b": {"gold": 78, "simple": 38, "multi": 24, "reject": 16, "json_valid": 116, "fc": "80/92", "prefill_tok_s": 1243.7, "decode_tok_s": 36.8},
+    "qwen2b": {"gold": 123, "simple": 48, "multi": 53, "reject": 22, "json_valid": 127, "fc": "91/92", "prefill_tok_s": 1063.1, "decode_tok_s": 27.5},
+    "delta_2b_minus_08b": {"gold": 45, "simple": 10, "multi": 29, "reject": 6, "json_valid": 11, "fc": 11}
+  }
+}
