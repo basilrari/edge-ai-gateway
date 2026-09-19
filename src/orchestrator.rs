@@ -34,6 +34,8 @@ struct ApplyOutcome {
     drone_steps: Vec<DroneStepTiming>,
     model_steps: Vec<ModelStepTiming>,
     apply_total_ms: u64,
+    warnings: Vec<String>,
+    applied_tools: Vec<ToolCall>,
 }
 
 impl Orchestrator {
@@ -129,6 +131,10 @@ impl Orchestrator {
         let mut drone_error: Option<String> = None;
         let mut drone_steps = Vec::new();
         let mut model_steps = Vec::new();
+        let (tools, warnings) = strip_disarm_with_land_or_rtl(tools);
+        if !warnings.is_empty() {
+            trace.push("stage=disarm_skipped_land_or_rtl".into());
+        }
 
         for (idx, tool) in tools.iter().enumerate() {
             if tool.category == "drone" {
@@ -293,6 +299,8 @@ impl Orchestrator {
             drone_steps,
             model_steps,
             apply_total_ms,
+            warnings,
+            applied_tools: tools,
         }
     }
 
@@ -324,6 +332,7 @@ impl Orchestrator {
         let mut tools_proposal: Option<Vec<ToolCall>> = None;
         let mut llm_tool_json: Option<String> = None;
         let mut applied: Option<ApplyOutcome> = None;
+        let mut warnings: Vec<String> = Vec::new();
 
         match cmd {
             GatewayCommand::Infer { prompt } => {
@@ -598,6 +607,8 @@ impl Orchestrator {
             drone_steps = a.drone_steps;
             model_steps = a.model_steps;
             apply_total_ms = Some(a.apply_total_ms);
+            warnings = a.warnings;
+            tools_proposal = Some(a.applied_tools);
         }
 
         let latency_ms = start.elapsed().as_millis() as u64;
@@ -684,6 +695,7 @@ impl Orchestrator {
             drone_http_status,
             drone_http_ms,
             drone_error,
+            warnings,
             trace,
             tool_params,
             tools: tools_proposal,
@@ -704,6 +716,44 @@ struct DroneApplyResult {
     ack_wait_ms: Option<u64>,
     completion_status: Option<String>,
     ack_result: Option<String>,
+}
+
+/// Shown on `/infer` when land/RTL is kept and disarm is dropped from the same plan.
+pub const DISARM_SKIPPED_LAND_RTL: &str = "Disarm was not sent. Land and RTL keep the motors running until the aircraft is on the ground. Disarm after it has landed.";
+
+/// drone-http holds takeoff for up to 40s after ACK; this must be larger than that wait plus ACK.
+const TAKEOFF_APPLY_HTTP_TIMEOUT_SECS: u64 = 90;
+
+fn drone_apply_http_timeout_secs(name: &str, options: ProcessOptions) -> u64 {
+    if name == "takeoff" && options.wait_for_drone_ack {
+        TAKEOFF_APPLY_HTTP_TIMEOUT_SECS
+    } else if options.wait_for_drone_ack {
+        30 + options.ack_timeout_ms / 1000
+    } else {
+        30
+    }
+}
+
+fn is_drone_named(tool: &ToolCall, name: &str) -> bool {
+    tool.category == "drone" && tool.name == name
+}
+
+/// Land/RTL must keep spinning the motors. Drop disarm from that same plan so land still runs.
+fn strip_disarm_with_land_or_rtl(tasks: &[ToolCall]) -> (Vec<ToolCall>, Vec<String>) {
+    let has_land_or_rtl = tasks
+        .iter()
+        .any(|t| is_drone_named(t, "land") || is_drone_named(t, "return_to_home"));
+    let has_disarm = tasks.iter().any(|t| is_drone_named(t, "disarm"));
+    if has_land_or_rtl && has_disarm {
+        let kept: Vec<ToolCall> = tasks
+            .iter()
+            .filter(|t| !is_drone_named(t, "disarm"))
+            .cloned()
+            .collect();
+        (kept, vec![DISARM_SKIPPED_LAND_RTL.to_string()])
+    } else {
+        (tasks.to_vec(), Vec::new())
+    }
 }
 
 async fn drone_apply_via_http(
@@ -741,13 +791,9 @@ async fn drone_apply_via_http(
     }
     let send_result = req
         .json(&body)
-        .timeout(Duration::from_secs(
-            if options.wait_for_drone_ack {
-                30 + options.ack_timeout_ms / 1000
-            } else {
-                30
-            },
-        ))
+        .timeout(Duration::from_secs(drone_apply_http_timeout_secs(
+            name, options,
+        )))
         .send()
         .await;
     let elapsed_ms = t0.elapsed().as_millis() as u64;
@@ -918,6 +964,59 @@ mod apply_tool_reject_tests {
             outcome.latency_ms < 1000,
             "reject must not wait on HTTP: {} ms",
             outcome.latency_ms
+        );
+    }
+
+    fn drone(name: &str) -> ToolCall {
+        ToolCall {
+            category: "drone".into(),
+            name: name.into(),
+            params: None,
+        }
+    }
+
+    #[test]
+    fn strip_drops_disarm_next_to_land() {
+        let (kept, warnings) = strip_disarm_with_land_or_rtl(&[drone("land"), drone("disarm")]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].name, "land");
+        assert_eq!(warnings, vec![DISARM_SKIPPED_LAND_RTL]);
+    }
+
+    #[test]
+    fn strip_drops_disarm_next_to_rtl() {
+        let (kept, warnings) =
+            strip_disarm_with_land_or_rtl(&[drone("return_to_home"), drone("disarm")]);
+        assert_eq!(kept.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["return_to_home"]);
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn strip_keeps_solo_disarm() {
+        let (kept, warnings) = strip_disarm_with_land_or_rtl(&[drone("disarm")]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].name, "disarm");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn strip_keeps_takeoff_then_goto() {
+        let (kept, warnings) = strip_disarm_with_land_or_rtl(&[drone("takeoff"), drone("goto_location")]);
+        assert_eq!(kept.len(), 2);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn takeoff_http_timeout_covers_climb_wait() {
+        let wait = ProcessOptions {
+            wait_for_drone_ack: true,
+            ack_timeout_ms: 3000,
+        };
+        assert_eq!(drone_apply_http_timeout_secs("takeoff", wait), 90);
+        assert_eq!(drone_apply_http_timeout_secs("land", wait), 33);
+        assert_eq!(
+            drone_apply_http_timeout_secs("takeoff", no_http_wait()),
+            30
         );
     }
 }

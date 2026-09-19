@@ -29,6 +29,8 @@ Rules:
 - "skip to waypoint N" or "set current waypoint to N" → set_current_waypoint {"seq": N}.
 - Do not add set_mode_guided unless the user asks for guided.
 - Do not add set_mode_auto unless the user asks for auto or start_mission already covers it.
+- takeoff then another step is allowed. Later steps run only after the aircraft has reached takeoff height.
+- Never add disarm in the same JSON as land or return_to_home. Disarm only when the aircraft is already on the ground. Do not disarm while flying.
 
 Drone tools:
 arm, disarm, set_mode_auto, set_mode_guided, loiter, takeoff, start_mission, set_current_waypoint, goto_location, return_to_home, land, pause, resume
@@ -70,6 +72,9 @@ User: start the mission
 
 User: return home
 {"tasks":[{"category":"drone","name":"return_to_home"}]}
+
+User: land then disarm
+{"tasks":[{"category":"drone","name":"land"}]}
 
 User: fly to 23.56, 120.47
 {"tasks":[{"category":"drone","name":"arm"},{"category":"drone","name":"takeoff"},{"category":"drone","name":"goto_location","params":{"lat_deg":23.56,"lon_deg":120.47,"alt_m":15}}]}
