@@ -158,6 +158,9 @@ pub struct ApiResponse {
     pub drone_http_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drone_error: Option<String>,
+    /// Operator-facing notices that are not a failed apply (e.g. disarm skipped next to land/RTL).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     /// When `pending_approval` is true, optional structured args for the next `ApplyTool` (from LLM).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_params: Option<serde_json::Value>,
@@ -212,6 +215,7 @@ pub struct CommandOutcome {
     pub drone_http_status: Option<u16>,
     pub drone_http_ms: Option<u64>,
     pub drone_error: Option<String>,
+    pub warnings: Vec<String>,
     pub trace: Vec<String>,
     pub tool_params: Option<serde_json::Value>,
     pub tools: Option<Vec<ToolCall>>,
