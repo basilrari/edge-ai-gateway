@@ -106,9 +106,10 @@ Qwen orig 0.8B here is **79**, not the sweep-3 **78** — different harness (lla
 |---|---:|---:|---:|---:|---:|---:|---:|
 | orig 0.8B Q5 | 56/150 | 79/150 | 29/50 | 10/60 | 17/40 | 27.95 | 1063 |
 | FT 0.8B Q4 e3 | 119/150 | 142/150 | 50/50 | 44/60 | 25/40 | 5.15 | 196 |
+| FT 0.8B Q4 e10 | 120/150 | 146/150 | 49/50 | 39/60 | 32/40 | 3.38 | 123 |
 | orig 2B Q5 | 93/150 | 105/150 | 34/50 | 36/60 | 23/40 | 38.75 | 1031 |
 
-Thinking-on hurts the base Qwen checkpoints (empty/truncated JSON). It is not the serving mode.
+Thinking-on hurts the base Qwen checkpoints (empty/truncated JSON). It is not the serving mode. FT e10 think-on is **120**, vs think-off **126** and e3 think-on **119** — extra epochs did not recover the think-off drop.
 
 ### Train losses (750-row set)
 
@@ -120,7 +121,7 @@ Thinking-on hurts the base Qwen checkpoints (empty/truncated JSON). It is not th
 | SmolLM2-360M | LoRA | 10 | 0.0235 | ~17 min |
 | Falcon-H1-Tiny-90M | full FT | 3 | 0.1355 | ~30 min |
 
-Smol e10 vs e3 is **+20 gold** (simple and reject; multi-step 32 → 33). Qwen 0.8B e10 vs e3 is **−9 gold**. Falcon 90M is slower than Smol 360M on this llama.cpp because each of 24 layers runs attention **and** Mamba2 **and** FFN; Q4 still leaves 169 F32 SSM/conv tensors.
+Smol e10 vs e3 is **+20 gold** (simple and reject; multi-step 32 → 33). Qwen 0.8B e10 vs e3 is **−9 gold** think-off and **+1** think-on. Falcon 90M is slower than Smol 360M on this llama.cpp because each of 24 layers runs attention **and** Mamba2 **and** FFN; Q4 still leaves 169 F32 SSM/conv tensors.
 
 This sweep does **not** change the production GGUF. FT 0.8B e3 is 135/150 on llama-server think-off vs orig 2B 120/150 on the same harness; that is not an `/infer`+FC re-bench.
 
@@ -138,7 +139,6 @@ This sweep does **not** change the production GGUF. FT 0.8B e3 is 135/150 on lla
 - Rebuilding llama.cpp past b8185.
 - The 8B MoE (does not fit this 16 GB unified-memory box next to TensorRT + the desktop).
 - Re-running the deleted GGUFs.
-- Think-on 150 for FT Qwen 0.8B **e10** (only think-off was scored).
 - Switching production from Qwen 2B Q5 to FT 0.8B / Smol / Falcon.
 - Re-running Sweep 5 through production `/infer` with FC ACKs.
 - EXL3 / EXL2 quants.

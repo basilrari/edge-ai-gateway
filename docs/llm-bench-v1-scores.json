@@ -236,6 +236,16 @@
       "cold_prompt_tokens": 1255,
       "train": {"method": "lora", "epochs": 10, "loss": 0.0077, "r": 16, "alpha": 32},
       "notes": "worse than ft08b_q4_e3 135/150; multi-step 50 -> 42"
+    },
+    {
+      "tag": "ft08b_q4_e10",
+      "file": "Qwen3.5-0.8B-sar-sft-e10-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": true,
+      "gold": 120, "json_valid": 146, "simple": 49, "multi": 39, "reject": 32,
+      "mean_wall_s": 3.382, "mean_predicted_n": 123.4,
+      "train": {"method": "lora", "epochs": 10, "loss": 0.0077, "r": 16, "alpha": 32},
+      "notes": "think-on; +1 vs e3 think-on 119/150; below own think-off 126/150"
     }
   ]
 }
