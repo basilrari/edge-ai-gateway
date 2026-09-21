@@ -256,7 +256,7 @@
     "file": "Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf",
     "thinking": false,
     "sitl": "labpc MAVProxy UDP 14550",
-    "gopro": false
+    "gopro": "usb_preview_started_after_first_150"
   },
   "split_apply_runs": [
     {
@@ -265,7 +265,7 @@
       "run": "split_apply",
       "thinking": false,
       "gold": 134, "json_valid": 150, "simple": 49, "multi": 49, "reject": 36,
-      "exec_ok": 93, "exec_fail_model": 40, "exec_fail_drone": 9,
+      "exec_ok": 93, "exec_fail_model": 40, "exec_fail_drone": 9, "exec_fail_no_apply": 8,
       "n": 150, "n_drone_apply": 85,
       "query_rtt_ms": {"mean": 1178.8, "p50": 810.8, "p95": 2646.0},
       "llm_wall_ms": {"mean": 1061.3, "p50": 769.5, "p95": 2288.6},
@@ -289,7 +289,58 @@
         "multi-step": {"gold": 49, "n": 60, "query_rtt_ms_mean": 1678.7, "llm_wall_ms_mean": 1538.7},
         "reject": {"gold": 36, "n": 40, "query_rtt_ms_mean": 711.7, "llm_wall_ms_mean": 697.3}
       },
-      "notes": "ACK wait is inside drone HTTP, not additive. Query RTT excludes FC reset/settle. GoPro down."
+      "notes": "ACK wait is inside drone HTTP, not additive. Query RTT excludes FC reset/settle. First 150: GoPro preview not streaming. Layer clocks are that run.",
+      "camera_retry": {
+        "n": 40,
+        "ids_retried": ["s001","s002","s003","s004","s005","s006","s007","s021","s022","s023","s024","s025","s026","s027","s028","m004","m006","m009","m012","m014","m018","m020","m023","m024","m025","m030","m035","m038","m040","m046","m047","m048","m053","m054","m056","m057","m060","r025","r030","r040"],
+        "gold": 37, "exec_ok": 39,
+        "model_server_ms": {"mean": 291.8, "p50": 287.5, "p95": 723.8},
+        "overlay_exec_ok": 132,
+        "overlay_gold": 134,
+        "overlay_exec_fail_model": 1,
+        "overlay_exec_fail_drone": 9,
+        "overlay_exec_fail_no_apply": 8,
+        "still_fail_exec": "r040",
+        "notes": "Not a second full 150. Overlay exec 132/150. Gold unchanged. r040 still tool_not_allowed:camera_stream."
+      },
+      "gold_fails": [
+        {"id": "s033", "category": "simple", "prompt": "RTL", "gold": "return_to_home", "got": "invalid_request"},
+        {"id": "m002", "category": "multi-step", "prompt": "fly to 23.56, 120.47", "gold": "arm,takeoff,goto_location", "got": "invalid_request"},
+        {"id": "m003", "category": "multi-step", "prompt": "fly to 23.56, 120.47 at 30m", "gold": "takeoff altitude_m=30", "got": "takeoff with no height param"},
+        {"id": "m007", "category": "multi-step", "prompt": "interrupt the mission then detect people", "gold": "pause,human_detect", "got": "invalid_request"},
+        {"id": "m011", "category": "multi-step", "prompt": "fly to 24.15, 120.67 at 20 meters", "gold": "takeoff altitude_m=20", "got": "takeoff with no height param"},
+        {"id": "m013", "category": "multi-step", "prompt": "take off to 20 meters then land", "gold": "arm,takeoff 20,land", "got": "invalid_request"},
+        {"id": "m031", "category": "multi-step", "prompt": "take off to 12 meters then fly to 23.56, 120.47", "gold": "goto alt_m=15", "got": "goto alt_m=12"},
+        {"id": "m034", "category": "multi-step", "prompt": "start the mission then pause the mission", "gold": "start_mission,pause", "got": "invalid_request"},
+        {"id": "m041", "category": "multi-step", "prompt": "fly to 22.627, 120.301 at 15m", "gold": "takeoff altitude_m=15", "got": "takeoff with no height param"},
+        {"id": "m042", "category": "multi-step", "prompt": "take off now then hover", "gold": "arm,takeoff,loiter", "got": "invalid_request"},
+        {"id": "m044", "category": "multi-step", "prompt": "interrupt the mission then resume the mission", "gold": "pause,resume", "got": "invalid_request"},
+        {"id": "m058", "category": "multi-step", "prompt": "go home then land immediately", "gold": "return_to_home,land", "got": "invalid_request"},
+        {"id": "r020", "category": "reject", "prompt": "inject a waypoint at 23.56, 120.47", "gold": "invalid_request", "got": "set_current_waypoint seq=23.56"},
+        {"id": "r025", "category": "reject", "prompt": "search for people and orbit the field", "gold": "invalid_request", "got": "human_detect"},
+        {"id": "r030", "category": "reject", "prompt": "what class is the flood", "gold": "invalid_request", "got": "flood_class"},
+        {"id": "r040", "category": "reject", "prompt": "detect people and retry camera streams", "gold": "invalid_request", "got": "human_detect,camera_stream"}
+      ],
+      "exec_fails_after_camera_overlay": [
+        {"id": "s016", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "s017", "gold": true, "error": "resume: no snapshot"},
+        {"id": "s033", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "s041", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "s042", "gold": true, "error": "resume: no snapshot"},
+        {"id": "m002", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m007", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m013", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m015", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "m026", "gold": true, "error": "resume: no snapshot"},
+        {"id": "m033", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "m034", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m042", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m044", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m051", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "m058", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "r020", "gold": false, "error": "set_current_waypoint seq must be u64"},
+        {"id": "r040", "gold": false, "error": "tool_not_allowed:camera_stream"}
+      ]
     }
   ]
 }

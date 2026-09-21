@@ -8,7 +8,7 @@ The 0.8B Qwen stays on disk as a smaller fallback. The other sweep GGUFs (MiniCP
 
 Later SAR JSON LoRA/full SFT numbers (Smol 360M, Falcon-H1-Tiny 90M, Qwen 0.8B/2B think on/off) are in **Sweep 5**. That run is **llama-server only**, not `/infer`, and has **no FC column**. Do not mix those gold counts with sweep 3/4.
 
-**Sweep 6** is FT 0.8B e3 on a **split-apply** harness: llama-server for JSON, then gateway `ApplyTool` one step at a time with FC ACK and a per-case reset. Not `Infer` auto-apply. Do not mix its gold with Sweep 5 or sweep 3/4.
+**Sweep 6** is FT 0.8B e3 on a **split-apply** harness: llama-server for JSON, then gateway `ApplyTool` one step at a time with FC ACK and a per-case reset. Not `Infer` auto-apply. Do not mix its gold with Sweep 5 or sweep 3/4. After a GoPro overlay, exec is **132/150**; gold is still **134/150**.
 
 Machine-readable copy: [llm-bench-v1-scores.json](llm-bench-v1-scores.json). Use `qwen_08b_vs_2b_use_this_pair` for the `/infer` 0.8B vs 2B pair. Use `sft_runs` for Sweep 5. Use `split_apply_runs` for Sweep 6.
 
@@ -129,11 +129,13 @@ This sweep does **not** change the production GGUF. FT 0.8B e3 is 135/150 on lla
 
 ## Sweep 6 — FT 0.8B e3 split-apply (llama-server + ApplyTool + FC)
 
-Same 150 gold, **Qwen3.5-0.8B-sar-sft-Q4_K_M** think-off. Each case: drone-http reset to GUIDED / disarmed / landed, llama-server `/v1/chat/completions`, then **one** `POST /infer` `ApplyTool` per tool with `x-wait-for-ack: 1`, then telemetry settle. Never `{"Infer":...}`. SITL on `labpc` via MAVProxy. GoPro was down, so model steps fail exec.
+Same 150 gold, **Qwen3.5-0.8B-sar-sft-Q4_K_M** think-off. Each case: drone-http reset to GUIDED / disarmed / landed, llama-server `/v1/chat/completions`, then **one** `POST /infer` `ApplyTool` per tool with `x-wait-for-ack: 1`, then telemetry settle. Never `{"Infer":...}`. SITL on `labpc` via MAVProxy.
 
 `drone_ack_wait_ms` is a **subset** of `drone_server_ms` (the HTTP call waits for ACK). Query RTT = LLM wall + ApplyTool client walls; **reset and settle are excluded**.
 
-Gold **134/150** (json 150/150; simple 49/50, multi 49/60, reject 36/40). Exec **93/150** (40 fails are model/camera; 9 are drone apply). Sweep 5 think-off on the same GGUF was 135/150 with no apply.
+Gold **134/150** (json 150/150; simple 49/50, multi 49/60, reject 36/40). Unchanged after the camera overlay. Sweep 5 think-off on the same GGUF was 135/150 with no apply.
+
+First pass, GoPro USB preview was not streaming: exec **93/150** (40 model/camera, 9 drone apply, 8 LLM `invalid_request` so no apply). After starting GoPro stream, those **40** were retried on the same harness: **39/40** exec. Overlay exec **132/150**. Not a second full 150.
 
 ### Layer times (ms, n=150)
 
@@ -152,6 +154,49 @@ Gold **134/150** (json 150/150; simple 49/50, multi 49/60, reject 36/40). Exec *
 | case wall | 5721 | 1134 | 18184 | reset + RTT + settle |
 
 On the **85** cases that applied a drone tool, ACK wait mean **51** ms (p50 45, p95 116); drone HTTP mean **54** ms. Multi-step query RTT mean **1679** ms (LLM 1539). Reject query RTT mean **712** ms (LLM only).
+
+The layer table above is the camera-down 150. On the 40 camera retries, model-server mean **292** ms (p50 288, p95 724). Do not read the 83 ms overall model mean as live inference.
+
+### Camera overlay (40 cases only)
+
+USB GoPro was enumerated; UDP `:8554` had no frames until `stream/start`. Then `human_detect` / `flood_seg` / `flood_class` all returned `ok`. Overlay: gold still 37/40 on that subset; exec 39/40.
+
+**r040** (`detect people and retry camera streams`): gold is `invalid_request` because the prompt says if *any* asked action has no tool, refuse the whole request. `camera_stream` is not a model tool (allowlist is `human_detect`, `flood_seg`, `flood_class`). `/camera/stream` is a gateway MJPEG proxy, not an LLM tool. The model still emitted `human_detect` then invented `camera_stream`. Split-apply scores that raw JSON and `ApplyTool`s it, so `human_detect` ran and `camera_stream` returned `tool_not_allowed`. Gateway `validate_llm_tasks` would have turned the whole list into `invalid_request` and would not have applied `human_detect`; that path was not re-measured here.
+
+### Gold misses (16)
+
+| id | cat | gold | got |
+|---|---|---|---|
+| s033 | simple | `return_to_home` | `invalid_request` (`RTL`) |
+| m002 | multi | arm → takeoff → goto 23.56,120.47 | `invalid_request` |
+| m003 | multi | takeoff `{altitude_m:30}` then goto alt 30 | takeoff with no height param |
+| m007 | multi | pause → human_detect | `invalid_request` |
+| m011 | multi | takeoff `{altitude_m:20}` then goto alt 20 | takeoff with no height param |
+| m013 | multi | arm → takeoff 20 m → land | `invalid_request` |
+| m031 | multi | takeoff 12 m, goto alt 15 | goto used alt 12 |
+| m034 | multi | start_mission → pause | `invalid_request` |
+| m041 | multi | takeoff `{altitude_m:15}` then goto | takeoff with no height param |
+| m042 | multi | arm → takeoff → loiter | `invalid_request` |
+| m044 | multi | pause → resume | `invalid_request` |
+| m058 | multi | RTL → land | `invalid_request` |
+| r020 | reject | `invalid_request` | `set_current_waypoint` with `seq=23.56` |
+| r025 | reject | `invalid_request` | `human_detect` (`search for people and orbit the field`) |
+| r030 | reject | `invalid_request` | `flood_class` (`what class is the flood`) |
+| r040 | reject | `invalid_request` | `human_detect` → `camera_stream` |
+
+Eight of those are false `invalid_request` (gold wanted tools). Four are reject cases that still emitted tools. Four are fly-to height/param mismatches.
+
+### Exec misses after overlay (18)
+
+Gold-true, FC/model refused (9):
+
+- pause needs AUTO + a running mission (reset leaves GUIDED/disarmed): s016, s041, m015, m033, m051
+- resume with no pause snapshot: s017, s042, m026
+- r040: `camera_stream` not allowed (after `human_detect` succeeded)
+
+Gold-false, nothing useful applied (9): s033, m002, m007, m013, m034, m042, m044, m058 (`invalid_request` / no apply); r020 (`set_current_waypoint` 502, `seq` must be u64).
+
+Pause/resume 502s were not retried. They match the gold tool list; the vehicle is just not in AUTO with a mission after reset.
 
 ## Serving notes
 
