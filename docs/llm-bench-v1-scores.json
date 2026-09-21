@@ -247,5 +247,49 @@
       "train": {"method": "lora", "epochs": 10, "loss": 0.0077, "r": 16, "alpha": 32},
       "notes": "think-on; +1 vs e3 think-on 119/150; below own think-off 126/150"
     }
+  ],
+  "split_apply_protocol": {
+    "harness": "llama-server chat then POST /infer ApplyTool per step, not Infer auto-apply",
+    "wait_for_ack": true,
+    "fc_reset_per_case": true,
+    "host_infer": "Jetson llama.cpp b8185",
+    "file": "Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf",
+    "thinking": false,
+    "sitl": "labpc MAVProxy UDP 14550",
+    "gopro": false
+  },
+  "split_apply_runs": [
+    {
+      "tag": "ft08b_q4_e3_split_apply",
+      "file": "Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf",
+      "run": "split_apply",
+      "thinking": false,
+      "gold": 134, "json_valid": 150, "simple": 49, "multi": 49, "reject": 36,
+      "exec_ok": 93, "exec_fail_model": 40, "exec_fail_drone": 9,
+      "n": 150, "n_drone_apply": 85,
+      "query_rtt_ms": {"mean": 1178.8, "p50": 810.8, "p95": 2646.0},
+      "llm_wall_ms": {"mean": 1061.3, "p50": 769.5, "p95": 2288.6},
+      "llm_prompt_decode_ms": {"mean": 1034.1, "p50": 744.0, "p95": 2260.4},
+      "apply_client_ms": {"mean": 117.5, "p50": 28.5, "p95": 416.9},
+      "gateway_ms": {"mean": 0.2, "p50": 0.0, "p95": 1.0},
+      "drone_server_ms": {"mean": 30.6, "p50": 9.5, "p95": 103.1},
+      "drone_ack_wait_ms": {"mean": 29.1, "p50": 8.5, "p95": 97.5},
+      "model_server_ms": {"mean": 82.7, "p50": 0.0, "p95": 329.1},
+      "reset_ms": {"mean": 2706.5, "p50": 40.2, "p95": 12003.2},
+      "settle_ms": {"mean": 1835.8, "p50": 1.6, "p95": 5009.3},
+      "case_wall_ms": {"mean": 5721.1, "p50": 1133.8, "p95": 18183.6},
+      "drone_apply_only": {
+        "n": 85,
+        "drone_ack_wait_ms": {"mean": 51.4, "p50": 45.0, "p95": 115.6},
+        "drone_server_ms": {"mean": 54.0, "p50": 49.0, "p95": 120.4},
+        "query_rtt_ms": {"mean": 1430.1, "p50": 1318.9, "p95": 2685.3}
+      },
+      "by_category": {
+        "simple": {"gold": 49, "n": 50, "query_rtt_ms_mean": 952.6, "llm_wall_ms_mean": 779.7},
+        "multi-step": {"gold": 49, "n": 60, "query_rtt_ms_mean": 1678.7, "llm_wall_ms_mean": 1538.7},
+        "reject": {"gold": 36, "n": 40, "query_rtt_ms_mean": 711.7, "llm_wall_ms_mean": 697.3}
+      },
+      "notes": "ACK wait is inside drone HTTP, not additive. Query RTT excludes FC reset/settle. GoPro down."
+    }
   ]
 }

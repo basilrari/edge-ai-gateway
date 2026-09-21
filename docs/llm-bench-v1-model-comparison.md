@@ -8,7 +8,9 @@ The 0.8B Qwen stays on disk as a smaller fallback. The other sweep GGUFs (MiniCP
 
 Later SAR JSON LoRA/full SFT numbers (Smol 360M, Falcon-H1-Tiny 90M, Qwen 0.8B/2B think on/off) are in **Sweep 5**. That run is **llama-server only**, not `/infer`, and has **no FC column**. Do not mix those gold counts with sweep 3/4.
 
-Machine-readable copy: [llm-bench-v1-scores.json](llm-bench-v1-scores.json). Use `qwen_08b_vs_2b_use_this_pair` for the `/infer` 0.8B vs 2B pair. Use `sft_runs` for Sweep 5.
+**Sweep 6** is FT 0.8B e3 on a **split-apply** harness: llama-server for JSON, then gateway `ApplyTool` one step at a time with FC ACK and a per-case reset. Not `Infer` auto-apply. Do not mix its gold with Sweep 5 or sweep 3/4.
+
+Machine-readable copy: [llm-bench-v1-scores.json](llm-bench-v1-scores.json). Use `qwen_08b_vs_2b_use_this_pair` for the `/infer` 0.8B vs 2B pair. Use `sft_runs` for Sweep 5. Use `split_apply_runs` for Sweep 6.
 
 ## Protocol
 
@@ -124,6 +126,32 @@ Thinking-on hurts the base Qwen checkpoints (empty/truncated JSON). It is not th
 Smol e10 vs e3 is **+20 gold** (simple and reject; multi-step 32 → 33). Qwen 0.8B e10 vs e3 is **−9 gold** think-off and **+1** think-on. Falcon 90M is slower than Smol 360M on this llama.cpp because each of 24 layers runs attention **and** Mamba2 **and** FFN; Q4 still leaves 169 F32 SSM/conv tensors.
 
 This sweep does **not** change the production GGUF. FT 0.8B e3 is 135/150 on llama-server think-off vs orig 2B 120/150 on the same harness; that is not an `/infer`+FC re-bench.
+
+## Sweep 6 — FT 0.8B e3 split-apply (llama-server + ApplyTool + FC)
+
+Same 150 gold, **Qwen3.5-0.8B-sar-sft-Q4_K_M** think-off. Each case: drone-http reset to GUIDED / disarmed / landed, llama-server `/v1/chat/completions`, then **one** `POST /infer` `ApplyTool` per tool with `x-wait-for-ack: 1`, then telemetry settle. Never `{"Infer":...}`. SITL on `labpc` via MAVProxy. GoPro was down, so model steps fail exec.
+
+`drone_ack_wait_ms` is a **subset** of `drone_server_ms` (the HTTP call waits for ACK). Query RTT = LLM wall + ApplyTool client walls; **reset and settle are excluded**.
+
+Gold **134/150** (json 150/150; simple 49/50, multi 49/60, reject 36/40). Exec **93/150** (40 fails are model/camera; 9 are drone apply). Sweep 5 think-off on the same GGUF was 135/150 with no apply.
+
+### Layer times (ms, n=150)
+
+| clock | mean | p50 | p95 | notes |
+|---|---:|---:|---:|---|
+| query RTT | 1179 | 811 | 2646 | LLM + ApplyTool; no reset |
+| LLM wall | 1061 | 770 | 2289 | llama-server HTTP |
+| LLM prompt+decode | 1034 | 744 | 2260 | `prompt_ms` + `predicted_ms` |
+| ApplyTool client | 118 | 28 | 417 | 0 on reject no-ops |
+| gateway residual | 0.2 | 0 | 1 | handler − drone − model |
+| drone HTTP (incl ACK) | 31 | 10 | 103 | 0 on reject |
+| ACK wait (subset) | 29 | 8 | 98 | inside drone HTTP |
+| model server | 83 | 0 | 329 | camera mostly failing fast |
+| FC reset | 2707 | 40 | 12003 | land after airborne cases |
+| inter-step settle | 1836 | 2 | 5009 | wait alt/armed/mode |
+| case wall | 5721 | 1134 | 18184 | reset + RTT + settle |
+
+On the **85** cases that applied a drone tool, ACK wait mean **51** ms (p50 45, p95 116); drone HTTP mean **54** ms. Multi-step query RTT mean **1679** ms (LLM 1539). Reject query RTT mean **712** ms (LLM only).
 
 ## Serving notes
 
