@@ -228,12 +228,14 @@
     },
     {
       "tag": "ft08b_q4_e10",
-      "file": "Qwen3.5-0.8B-sar-sft-e10-f16.gguf",
+      "file": "Qwen3.5-0.8B-sar-sft-e10-Q4_K_M.gguf",
       "run": "sft_llama_server",
-      "ok": false,
       "thinking": false,
-      "error": "150 not run: F16 GGUF stayed on Blackwell host; 140.123.105.18 unreachable",
-      "train": {"method": "lora", "epochs": 10, "loss": 0.0077, "r": 16, "alpha": 32}
+      "gold": 126, "json_valid": 150, "simple": 47, "multi": 42, "reject": 37,
+      "mean_wall_s": 0.995, "cold_prefill_tok_s": 1272.9, "cold_decode_tok_s": 40.2,
+      "cold_prompt_tokens": 1255,
+      "train": {"method": "lora", "epochs": 10, "loss": 0.0077, "r": 16, "alpha": 32},
+      "notes": "worse than ft08b_q4_e3 135/150; multi-step 50 -> 42"
     }
   ]
 }

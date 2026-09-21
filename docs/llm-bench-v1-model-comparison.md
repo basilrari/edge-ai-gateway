@@ -94,9 +94,9 @@ SFT recipe unless noted: LoRA r=16 α=32 `all-linear`, 3 epochs, lr 2e-4, on an 
 | **FT SmolLM2-360M Q4 e10** | **105/150** | 148/150 | 39/50 | 33/60 | 33/40 | 4073 | 81.6 | 0.37 |
 | orig Falcon-H1-Tiny-90M Q4 | 2/150 | 4/150 | 0/50 | 0/60 | 2/40 | 1587 | — | 2.47 |
 | **FT Falcon-H1-Tiny-90M Q4 e3** | **112/150** | 150/150 | 48/50 | 39/60 | 25/40 | 1582 | 24.5 | 1.32 |
-| FT Qwen3.5-0.8B Q4 e10 | — | — | — | — | — | — | — | — |
+| FT Qwen3.5-0.8B Q4 e10 | 126/150 | 150/150 | 47/50 | 42/60 | 37/40 | 1273 | 40.2 | 1.00 |
 
-FT 0.8B e10: train finished (loss 0.0077, ~72 min, F16 GGUF written on the Blackwell host). That host went unreachable before the GGUF reached this Jetson, so **there is no e10 0.8B 150**. Orig Falcon decode tok/s is omitted: most generations were 1-token dumps, so llama.cpp's tok/s is not a speed.
+FT 0.8B e10 vs e3 is **−9 gold** (multi-step 50 → 42). Train loss 0.0077 on 750 rows is below e3's 0.0204; that extra fit did not transfer. Orig Falcon decode tok/s is omitted: most generations were 1-token dumps, so llama.cpp's tok/s is not a speed.
 
 Qwen orig 0.8B here is **79**, not the sweep-3 **78** — different harness (llama-server vs `/infer`, thinking kwargs, no FC). Treat them as separate tables.
 
@@ -120,7 +120,7 @@ Thinking-on hurts the base Qwen checkpoints (empty/truncated JSON). It is not th
 | SmolLM2-360M | LoRA | 10 | 0.0235 | ~17 min |
 | Falcon-H1-Tiny-90M | full FT | 3 | 0.1355 | ~30 min |
 
-Smol e10 vs e3 is **+20 gold** (simple and reject; multi-step 32 → 33). Falcon 90M is slower than Smol 360M on this llama.cpp because each of 24 layers runs attention **and** Mamba2 **and** FFN; Q4 still leaves 169 F32 SSM/conv tensors.
+Smol e10 vs e3 is **+20 gold** (simple and reject; multi-step 32 → 33). Qwen 0.8B e10 vs e3 is **−9 gold**. Falcon 90M is slower than Smol 360M on this llama.cpp because each of 24 layers runs attention **and** Mamba2 **and** FFN; Q4 still leaves 169 F32 SSM/conv tensors.
 
 This sweep does **not** change the production GGUF. FT 0.8B e3 is 135/150 on llama-server think-off vs orig 2B 120/150 on the same harness; that is not an `/infer`+FC re-bench.
 
@@ -138,7 +138,7 @@ This sweep does **not** change the production GGUF. FT 0.8B e3 is 135/150 on lla
 - Rebuilding llama.cpp past b8185.
 - The 8B MoE (does not fit this 16 GB unified-memory box next to TensorRT + the desktop).
 - Re-running the deleted GGUFs.
-- Scoring FT Qwen 0.8B **e10** on the Jetson 150 (GGUF still on the Blackwell host; machine unreachable at write time).
+- Think-on 150 for FT Qwen 0.8B **e10** (only think-off was scored).
 - Switching production from Qwen 2B Q5 to FT 0.8B / Smol / Falcon.
 - Re-running Sweep 5 through production `/infer` with FC ACKs.
 - EXL3 / EXL2 quants.
