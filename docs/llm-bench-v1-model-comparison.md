@@ -6,6 +6,8 @@ Local measurement of candidate GGUFs against the 150-case `bench_v1` set, scored
 
 The 0.8B Qwen stays on disk as a smaller fallback. The other sweep GGUFs (MiniCPM5, LFM2.5) were deleted after this write-up.
 
+There is **no Qwen3.6 0.8B or 2B release**. Orig 0.8B in these tables is **Qwen3.5-0.8B Q5**. A local GGUF was saved as `Qwen3.6-0.8B-Q5_K_M.gguf`; that filename is a misnomer. Orig 2B is `Qwen3.5-2B-Q5_K_M.gguf`. FT 0.8B is `Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf`.
+
 Later SAR JSON LoRA/full SFT numbers (Smol 360M, Falcon-H1-Tiny 90M, Qwen 0.8B/2B think on/off) are in **Sweep 5**. That run is **llama-server only**, not `/infer`, and has **no FC column**. Do not mix those gold counts with sweep 3/4.
 
 **Sweep 6** is FT 0.8B e3 on a **split-apply** harness: llama-server for JSON, then gateway `ApplyTool` one step at a time with FC ACK and a per-case reset. Not `Infer` auto-apply. Do not mix its gold with Sweep 5 or sweep 3/4. After a GoPro overlay, exec is **132/150**; gold is still **134/150**.
@@ -27,7 +29,7 @@ Machine-readable copy: [llm-bench-v1-scores.json](llm-bench-v1-scores.json). Use
 | model | gold | simple | multi | reject | FC | prefill tok/s | decode tok/s | notes |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | Qwen3.5-2B Q5 | 123/150 | 48/50 | 53/60 | 22/40 | 91/92 | 1063.1 | 27.5 | default template |
-| Qwen3.6-0.8B Q5 | 78/150 | 38/50 | 24/60 | 16/40 | 80/92 | 1243.7 | 36.8 | default template |
+| Qwen3.5-0.8B Q5 | 78/150 | 38/50 | 24/60 | 16/40 | 80/92 | 1243.7 | 36.8 | default template |
 | MiniCPM5-1B Q4 | 71/150 | 26/50 | 9/60 | 36/40 | 77/92 | 2364.7 | 56.3 | thinking disabled; otherwise empty `content` |
 | LFM2.5-1.2B-Instruct Q4 | 43/150 | 10/50 | 3/60 | 30/40 | 68/92 | 2285.8 | 63.4 | often invalid JSON (`json_valid` 58/150) |
 | MiniCPM5-2B Q4 | — | — | — | — | — | — | — | load failed: `unknown pre-tokenizer type: 'minicpm5'` on llama.cpp b8185 |
@@ -63,7 +65,7 @@ Qwen 2B: `json_valid` 126/150, FC 91/92, explicit refusals, no extra llama.cpp p
 
 ## 0.8B vs 2B (same harness: sweep 3)
 
-| | Qwen3.6-0.8B Q5 | Qwen3.5-2B Q5 | 2B − 0.8B |
+| | Qwen3.5-0.8B Q5 | Qwen3.5-2B Q5 | 2B − 0.8B |
 |---|---:|---:|---:|
 | gold | 78/150 | 123/150 | +45 |
 | simple | 38/50 | 48/50 | +10 |
@@ -74,7 +76,7 @@ Qwen 2B: `json_valid` 126/150, FC 91/92, explicit refusals, no extra llama.cpp p
 | prefill tok/s (cold) | 1243.7 | 1063.1 | 2B slower |
 | decode tok/s (cold) | 36.8 | 27.5 | 2B slower |
 
-The gap is multi-step. 0.8B run-to-run on this box was 82 → 81 → 78; 2B was 123 then 124. Treat ±4 as noise; +45 is not. 0.8B file kept: `Qwen3.6-0.8B-Q5_K_M.gguf`.
+The gap is multi-step. 0.8B run-to-run on this box was 82 → 81 → 78; 2B was 123 then 124. Treat ±4 as noise; +45 is not. Orig 0.8B file on this box: `Qwen3.6-0.8B-Q5_K_M.gguf` (misnamed Qwen3.5-0.8B Q5).
 
 ## Sweep 5 — SAR JSON SFT (llama-server, not `/infer`)
 
@@ -88,7 +90,7 @@ SFT recipe unless noted: LoRA r=16 α=32 `all-linear`, 3 epochs, lr 2e-4, on an 
 
 | model | gold | json | simple | multi | reject | cold prefill | cold decode | s/case |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| orig Qwen3.6-0.8B Q5 | 79/150 | 142/150 | 38/50 | 29/60 | 12/40 | 1440 | 38.4 | 1.09 |
+| orig Qwen3.5-0.8B Q5 | 79/150 | 142/150 | 38/50 | 29/60 | 12/40 | 1440 | 38.4 | 1.09 |
 | **FT Qwen3.5-0.8B Q4 e3** | **135/150** | 150/150 | 49/50 | 50/60 | 36/40 | 1551 | 41.1 | 1.01 |
 | orig Qwen3.5-2B Q5 | 120/150 | 150/150 | 48/50 | 52/60 | 20/40 | 1056 | 27.0 | 1.87 |
 | orig SmolLM2-360M Q4 | 28/150 | 132/150 | 1/50 | 2/60 | 25/40 | 3918 | 77.4 | 0.52 |
