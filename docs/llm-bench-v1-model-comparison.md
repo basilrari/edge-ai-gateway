@@ -2,11 +2,11 @@
 
 Local measurement of candidate GGUFs against the 150-case `bench_v1` set, scored as BFCL-style AST match (`full_match`) plus a separate flight-controller acceptance count. Runs were on this Jetson, through the production `/infer` path, with SITL on `labpc`.
 
-**Serving choice: `Qwen3.5-2B-Q5_K_M`.** MiniCPM5-2B scored higher on gold (133 vs 124) but is not the production model: it often returns empty content on reject cases instead of the `invalid_request` envelope, and it emits malformed JSON on the longest `goto_location` chains. Qwen 2B is the model that actually follows the tool JSON contract.
+**Serving choice: `Qwen3.5-0.8B-sar-sft-Q4_K_M` (FT e3, think-off).** Sweep 3/4 originally picked orig Qwen3.5-2B Q5 over MiniCPM5-2B (empty-reject JSON, extra `}` on long `goto_location` chains). Sweep 5/6 then beat orig 2B with this 0.8B SFT.
 
-The 0.8B Qwen stays on disk as a smaller fallback. The other sweep GGUFs (MiniCPM5, LFM2.5) were deleted after this write-up.
+Orig 0.8B Q5 and orig 2B Q5 stay on disk as fallbacks. The other sweep GGUFs (MiniCPM5, LFM2.5) were deleted after this write-up.
 
-There is **no Qwen3.6 0.8B or 2B release**. Orig 0.8B in these tables is **Qwen3.5-0.8B Q5**. A local GGUF was saved as `Qwen3.6-0.8B-Q5_K_M.gguf`; that filename is a misnomer. Orig 2B is `Qwen3.5-2B-Q5_K_M.gguf`. FT 0.8B is `Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf`.
+There is **no Qwen3.6 0.8B or 2B release**. Orig 0.8B is `Qwen3.5-0.8B-Q5_K_M.gguf`. Orig 2B is `Qwen3.5-2B-Q5_K_M.gguf`. FT 0.8B is `Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf`.
 
 Later SAR JSON LoRA/full SFT numbers (Smol 360M, Falcon-H1-Tiny 90M, Qwen 0.8B/2B think on/off) are in **Sweep 5**. That run is **llama-server only**, not `/infer`, and has **no FC column**. Do not mix those gold counts with sweep 3/4.
 
@@ -76,7 +76,7 @@ Qwen 2B: `json_valid` 126/150, FC 91/92, explicit refusals, no extra llama.cpp p
 | prefill tok/s (cold) | 1243.7 | 1063.1 | 2B slower |
 | decode tok/s (cold) | 36.8 | 27.5 | 2B slower |
 
-The gap is multi-step. 0.8B run-to-run on this box was 82 → 81 → 78; 2B was 123 then 124. Treat ±4 as noise; +45 is not. Orig 0.8B file on this box: `Qwen3.6-0.8B-Q5_K_M.gguf` (misnamed Qwen3.5-0.8B Q5).
+The gap is multi-step. 0.8B run-to-run on this box was 82 → 81 → 78; 2B was 123 then 124. Treat ±4 as noise; +45 is not. Orig 0.8B file: `Qwen3.5-0.8B-Q5_K_M.gguf`.
 
 ## Sweep 5 — SAR JSON SFT (llama-server, not `/infer`)
 
@@ -203,7 +203,7 @@ Pause/resume 502s were not retried. They match the gold tool list; the vehicle i
 ## Serving notes
 
 - Binary: local llama.cpp b8185 (`2afcdb9`, 2026-03-02), `-ngl 99 -c 16384`.
-- File: `Qwen3.5-2B-Q5_K_M.gguf`.
+- File: `Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf` (FT e3, `--chat-template-kwargs '{"enable_thinking":false}'`). Orig 2B Q5 and orig 0.8B Q5 remain on disk.
 - Gateway `max_tokens`: 2048 (this repo). Instruct models stop well under that; 256 used to zero out reasoning models.
 - MiniCPM5-2B needed upstream llama.cpp PR [#23384](https://github.com/ggml-org/llama.cpp/pull/23384) (`minicpm5` pre-tokenizer). That patch is **not** in this repository; it was a local llama.cpp edit, then reverted after the GGUF was deleted.
 
@@ -214,6 +214,6 @@ Pause/resume 502s were not retried. They match the gold tool list; the vehicle i
 - Rebuilding llama.cpp past b8185.
 - The 8B MoE (does not fit this 16 GB unified-memory box next to TensorRT + the desktop).
 - Re-running the deleted GGUFs.
-- Switching production from Qwen 2B Q5 to FT 0.8B / Smol / Falcon.
+- Switching production from FT 0.8B e3 to Smol / Falcon.
 - Re-running Sweep 5 through production `/infer` with FC ACKs.
 - EXL3 / EXL2 quants.
