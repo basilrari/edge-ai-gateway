@@ -1,0 +1,354 @@
+{
+  "corpus": "bench_v1",
+  "cases": 150,
+  "splits": {"simple": 50, "multi-step": 60, "reject": 40},
+  "gold": "full_match (tool name + args)",
+  "fc": "drone-tool cases the flight controller accepted",
+  "host": "Jetson, llama.cpp b8185, ctx 16384, production /infer",
+  "qwen_naming": "No Qwen3.6 0.8B or 2B release. Orig 0.8B is Qwen3.5-0.8B-Q5_K_M.gguf. Orig 2B is Qwen3.5-2B-Q5_K_M.gguf. Serving: Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf (FT e3, think-off).",
+  "canonical_runs": [
+    {
+      "tag": "qwen35_2b_q5",
+      "file": "Qwen3.5-2B-Q5_K_M.gguf",
+      "run": "sweep3",
+      "gold": 123, "simple": 48, "multi": 53, "reject": 22,
+      "json_valid": 127, "fc_ok": 91, "fc_n": 92,
+      "prefill_tok_s": 1063.1, "decode_tok_s": 27.5,
+      "max_tokens": 256, "notes": "default template; serving choice"
+    },
+    {
+      "tag": "qwen35_2b_q5",
+      "file": "Qwen3.5-2B-Q5_K_M.gguf",
+      "run": "sweep4_control",
+      "gold": 124, "simple": 48, "multi": 53, "reject": 23,
+      "json_valid": 126, "fc_ok": 91, "fc_n": 92,
+      "prefill_tok_s": 1064.6, "decode_tok_s": 27.4,
+      "max_tokens": 2048, "notes": "engine control after local MiniCPM5 vocab patch; +1 vs sweep3 is noise"
+    },
+    {
+      "tag": "qwen35_08b_q5",
+      "model": "Qwen3.5-0.8B",
+      "file": "Qwen3.5-0.8B-Q5_K_M.gguf",
+      "run": "sweep3",
+      "gold": 78, "simple": 38, "multi": 24, "reject": 16,
+      "json_valid": 116, "fc_ok": 80, "fc_n": 92,
+      "prefill_tok_s": 1243.7, "decode_tok_s": 36.8,
+      "max_tokens": 256, "notes": "Qwen3.5-0.8B Q5. Same harness as sweep3 2B; use this pair for 0.8B vs 2B"
+    },
+    {
+      "tag": "qwen35_08b_q5",
+      "model": "Qwen3.5-0.8B",
+      "file": "Qwen3.5-0.8B-Q5_K_M.gguf",
+      "run": "earlier_same_config",
+      "gold": 82, "simple": 39, "multi": 28, "reject": 15,
+      "json_valid": 120, "fc_ok": 83, "fc_n": 92,
+      "notes": "run-to-run noise on 0.8B: 82 then 81 then 78"
+    },
+    {
+      "tag": "qwen35_08b_q5",
+      "model": "Qwen3.5-0.8B",
+      "file": "Qwen3.5-0.8B-Q5_K_M.gguf",
+      "run": "sweep2",
+      "gold": 81, "simple": 40, "multi": 24, "reject": 17,
+      "json_valid": 116, "fc_ok": 79, "fc_n": 92,
+      "notes": "enable_thinking=false applied globally; slightly perturbs Qwen"
+    },
+    {
+      "tag": "minicpm5_1b_q4",
+      "file": "MiniCPM5-1B-Q4_K_M.gguf",
+      "run": "sweep3",
+      "gold": 71, "simple": 26, "multi": 9, "reject": 36,
+      "json_valid": 66, "fc_ok": 77, "fc_n": 92,
+      "prefill_tok_s": 2364.7, "decode_tok_s": 56.3,
+      "flags": "enable_thinking=false",
+      "notes": "default template returns empty content (reasoning eats the budget). Reject score is mostly silence mapped to invalid_request. GGUF deleted after this run."
+    },
+    {
+      "tag": "minicpm5_2b_q4",
+      "file": "MiniCPM5-2B-Q4_K_M.gguf",
+      "run": "sweep4",
+      "gold": 133, "simple": 45, "multi": 53, "reject": 35,
+      "json_valid": 104, "fc_ok": 86, "fc_n": 92,
+      "prefill_tok_s": 1207.8, "decode_tok_s": 31.9,
+      "max_tokens": 2048,
+      "notes": "needed llama.cpp minicpm5 pre-tokenizer patch. Highest gold. All 35 reject passes were empty output, not explicit invalid_request. Four goto_location chains emit extra }. GGUF deleted after this run."
+    },
+    {
+      "tag": "lfm25_12b_instruct_q4",
+      "file": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+      "run": "sweep3",
+      "gold": 43, "simple": 10, "multi": 3, "reject": 30,
+      "json_valid": 58, "fc_ok": 68, "fc_n": 92,
+      "prefill_tok_s": 2285.8, "decode_tok_s": 63.4,
+      "notes": "not viable as a tool-caller. GGUF deleted after this run."
+    },
+    {
+      "tag": "lfm25_12b_thinking_q4",
+      "file": "LFM2.5-1.2B-Thinking-Q4_K_M.gguf",
+      "run": "sweep4",
+      "gold": 47, "simple": 5, "multi": 5, "reject": 37,
+      "json_valid": 22, "fc_ok": 28, "fc_n": 92,
+      "prefill_tok_s": 2231.8, "decode_tok_s": 63.1,
+      "max_tokens": 2048,
+      "notes": "unusable at max_tokens 256 (empty content). At 2048, systematically emits }}} instead of ]}. Reject 37/40 is silence. GGUF deleted after this run."
+    },
+    {
+      "tag": "lfm25_8b_a1b_q4",
+      "file": "LFM2.5-8B-A1B-Q4_K_M.gguf",
+      "run": "sweep3",
+      "ok": false,
+      "error": "cudaMalloc 4908 MiB failed on 16 GB unified memory",
+      "notes": "GGUF deleted after this run."
+    }
+  ],
+  "do_not_use": [
+    {
+      "tag": "minicpm5_1b_q4",
+      "run": "sweep1_bogus",
+      "gold": 40,
+      "json_valid": 2,
+      "notes": "thinking ate the 256-token budget; 39/40 reject was empty-output artifact"
+    }
+  ],
+  "qwen_08b_vs_2b_use_this_pair": {
+    "same_harness": "sweep3",
+    "qwen08b": {"model": "Qwen3.5-0.8B", "file": "Qwen3.5-0.8B-Q5_K_M.gguf", "gold": 78, "simple": 38, "multi": 24, "reject": 16, "json_valid": 116, "fc": "80/92", "prefill_tok_s": 1243.7, "decode_tok_s": 36.8, "notes": "no Qwen3.6 0.8B/2B release"},
+    "qwen2b": {"model": "Qwen3.5-2B", "file": "Qwen3.5-2B-Q5_K_M.gguf", "gold": 123, "simple": 48, "multi": 53, "reject": 22, "json_valid": 127, "fc": "91/92", "prefill_tok_s": 1063.1, "decode_tok_s": 27.5},
+    "delta_2b_minus_08b": {"gold": 45, "simple": 10, "multi": 29, "reject": 6, "json_valid": 11, "fc": 11}
+  },
+  "sft_protocol": {
+    "harness": "llama-server /v1/chat/completions, not production /infer",
+    "fc": null,
+    "temperature": 0.0,
+    "train_n": 750,
+    "train_overlap_with_bench_v1": false,
+    "host_infer": "Jetson llama.cpp b8185",
+    "host_train": "NVIDIA RTX PRO 5000 Blackwell"
+  },
+  "sft_runs": [
+    {
+      "tag": "orig08b_q5",
+      "model": "Qwen3.5-0.8B",
+      "file": "Qwen3.5-0.8B-Q5_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": false,
+      "gold": 79, "json_valid": 142, "simple": 38, "multi": 29, "reject": 12,
+      "mean_wall_s": 1.091, "cold_prefill_tok_s": 1440.0, "cold_decode_tok_s": 38.4,
+      "cold_prompt_tokens": 1255,
+      "notes": "Qwen3.5-0.8B Q5 (no 3.6 0.8B/2B release)"
+    },
+    {
+      "tag": "ft08b_q4_e3",
+      "file": "Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": false,
+      "gold": 135, "json_valid": 150, "simple": 49, "multi": 50, "reject": 36,
+      "mean_wall_s": 1.009, "cold_prefill_tok_s": 1550.8, "cold_decode_tok_s": 41.1,
+      "cold_prompt_tokens": 1255,
+      "train": {"method": "lora", "epochs": 3, "loss": 0.0204, "r": 16, "alpha": 32}
+    },
+    {
+      "tag": "orig2b_q5",
+      "file": "Qwen3.5-2B-Q5_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": false,
+      "gold": 120, "json_valid": 150, "simple": 48, "multi": 52, "reject": 20,
+      "mean_wall_s": 1.872, "cold_prefill_tok_s": 1055.5, "cold_decode_tok_s": 27.0,
+      "cold_prompt_tokens": 1255
+    },
+    {
+      "tag": "orig08b_q5",
+      "model": "Qwen3.5-0.8B",
+      "file": "Qwen3.5-0.8B-Q5_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": true,
+      "gold": 56, "json_valid": 79, "simple": 29, "multi": 10, "reject": 17,
+      "mean_wall_s": 27.952, "cold_prefill_tok_s": 1489.0, "cold_decode_tok_s": 38.9,
+      "mean_predicted_n": 1063.0,
+      "notes": "Qwen3.5-0.8B Q5 (no 3.6 0.8B/2B release)"
+    },
+    {
+      "tag": "ft08b_q4_e3",
+      "file": "Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": true,
+      "gold": 119, "json_valid": 142, "simple": 50, "multi": 44, "reject": 25,
+      "mean_wall_s": 5.15, "cold_prefill_tok_s": 1476.6, "cold_decode_tok_s": 40.7,
+      "mean_predicted_n": 195.7
+    },
+    {
+      "tag": "orig2b_q5",
+      "file": "Qwen3.5-2B-Q5_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": true,
+      "gold": 93, "json_valid": 105, "simple": 34, "multi": 36, "reject": 23,
+      "mean_wall_s": 38.749, "cold_prefill_tok_s": 1060.4, "cold_decode_tok_s": 27.1,
+      "mean_predicted_n": 1030.9
+    },
+    {
+      "tag": "orig_smol360_q4",
+      "file": "SmolLM2-360M-Instruct-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": false,
+      "gold": 28, "json_valid": 132, "simple": 1, "multi": 2, "reject": 25,
+      "mean_wall_s": 0.515, "cold_prefill_tok_s": 3917.9, "cold_decode_tok_s": 77.4,
+      "cold_prompt_tokens": 1401
+    },
+    {
+      "tag": "ft_smol360_q4_e3",
+      "file": "SmolLM2-360M-Instruct-sar-sft-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": false,
+      "gold": 85, "json_valid": 149, "simple": 30, "multi": 32, "reject": 23,
+      "mean_wall_s": 0.379, "cold_prefill_tok_s": 4056.2, "cold_decode_tok_s": 75.3,
+      "cold_prompt_tokens": 1401,
+      "train": {"method": "lora", "epochs": 3, "loss": 0.0729, "r": 16, "alpha": 32}
+    },
+    {
+      "tag": "ft_smol360_q4_e10",
+      "file": "SmolLM2-360M-Instruct-sar-sft-e10-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": false,
+      "gold": 105, "json_valid": 148, "simple": 39, "multi": 33, "reject": 33,
+      "mean_wall_s": 0.367, "cold_prefill_tok_s": 4073.4, "cold_decode_tok_s": 81.6,
+      "cold_prompt_tokens": 1401,
+      "train": {"method": "lora", "epochs": 10, "loss": 0.0235, "r": 16, "alpha": 32}
+    },
+    {
+      "tag": "orig_falcon90_q4",
+      "file": "Falcon-H1-Tiny-90M-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": false,
+      "gold": 2, "json_valid": 4, "simple": 0, "multi": 0, "reject": 2,
+      "mean_wall_s": 2.466, "cold_prefill_tok_s": 1586.8,
+      "cold_decode_tok_s": null,
+      "notes": "cold decode tok/s omitted: mostly 1-token dumps"
+    },
+    {
+      "tag": "ft_falcon90_q4_e3",
+      "file": "Falcon-H1-Tiny-90M-sar-sft-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": false,
+      "gold": 112, "json_valid": 150, "simple": 48, "multi": 39, "reject": 25,
+      "mean_wall_s": 1.32, "cold_prefill_tok_s": 1581.5, "cold_decode_tok_s": 24.5,
+      "cold_prompt_tokens": 1384,
+      "train": {"method": "full", "epochs": 3, "loss": 0.1355, "lr": 1e-4, "notes": "LoRA blocked on Mamba out_proj"}
+    },
+    {
+      "tag": "ft08b_q4_e10",
+      "file": "Qwen3.5-0.8B-sar-sft-e10-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": false,
+      "gold": 126, "json_valid": 150, "simple": 47, "multi": 42, "reject": 37,
+      "mean_wall_s": 0.995, "cold_prefill_tok_s": 1272.9, "cold_decode_tok_s": 40.2,
+      "cold_prompt_tokens": 1255,
+      "train": {"method": "lora", "epochs": 10, "loss": 0.0077, "r": 16, "alpha": 32},
+      "notes": "worse than ft08b_q4_e3 135/150; multi-step 50 -> 42"
+    },
+    {
+      "tag": "ft08b_q4_e10",
+      "file": "Qwen3.5-0.8B-sar-sft-e10-Q4_K_M.gguf",
+      "run": "sft_llama_server",
+      "thinking": true,
+      "gold": 120, "json_valid": 146, "simple": 49, "multi": 39, "reject": 32,
+      "mean_wall_s": 3.382, "mean_predicted_n": 123.4,
+      "train": {"method": "lora", "epochs": 10, "loss": 0.0077, "r": 16, "alpha": 32},
+      "notes": "think-on; +1 vs e3 think-on 119/150; below own think-off 126/150"
+    }
+  ],
+  "split_apply_protocol": {
+    "harness": "llama-server chat then POST /infer ApplyTool per step, not Infer auto-apply",
+    "wait_for_ack": true,
+    "fc_reset_per_case": true,
+    "host_infer": "Jetson llama.cpp b8185",
+    "file": "Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf",
+    "thinking": false,
+    "sitl": "labpc MAVProxy UDP 14550",
+    "gopro": "usb_preview_started_after_first_150"
+  },
+  "split_apply_runs": [
+    {
+      "tag": "ft08b_q4_e3_split_apply",
+      "file": "Qwen3.5-0.8B-sar-sft-Q4_K_M.gguf",
+      "run": "split_apply",
+      "thinking": false,
+      "gold": 134, "json_valid": 150, "simple": 49, "multi": 49, "reject": 36,
+      "exec_ok": 93, "exec_fail_model": 40, "exec_fail_drone": 9, "exec_fail_no_apply": 8,
+      "n": 150, "n_drone_apply": 85,
+      "query_rtt_ms": {"mean": 1178.8, "p50": 810.8, "p95": 2646.0},
+      "llm_wall_ms": {"mean": 1061.3, "p50": 769.5, "p95": 2288.6},
+      "llm_prompt_decode_ms": {"mean": 1034.1, "p50": 744.0, "p95": 2260.4},
+      "apply_client_ms": {"mean": 117.5, "p50": 28.5, "p95": 416.9},
+      "gateway_ms": {"mean": 0.2, "p50": 0.0, "p95": 1.0},
+      "drone_server_ms": {"mean": 30.6, "p50": 9.5, "p95": 103.1},
+      "drone_ack_wait_ms": {"mean": 29.1, "p50": 8.5, "p95": 97.5},
+      "model_server_ms": {"mean": 82.7, "p50": 0.0, "p95": 329.1},
+      "reset_ms": {"mean": 2706.5, "p50": 40.2, "p95": 12003.2},
+      "settle_ms": {"mean": 1835.8, "p50": 1.6, "p95": 5009.3},
+      "case_wall_ms": {"mean": 5721.1, "p50": 1133.8, "p95": 18183.6},
+      "drone_apply_only": {
+        "n": 85,
+        "drone_ack_wait_ms": {"mean": 51.4, "p50": 45.0, "p95": 115.6},
+        "drone_server_ms": {"mean": 54.0, "p50": 49.0, "p95": 120.4},
+        "query_rtt_ms": {"mean": 1430.1, "p50": 1318.9, "p95": 2685.3}
+      },
+      "by_category": {
+        "simple": {"gold": 49, "n": 50, "query_rtt_ms_mean": 952.6, "llm_wall_ms_mean": 779.7},
+        "multi-step": {"gold": 49, "n": 60, "query_rtt_ms_mean": 1678.7, "llm_wall_ms_mean": 1538.7},
+        "reject": {"gold": 36, "n": 40, "query_rtt_ms_mean": 711.7, "llm_wall_ms_mean": 697.3}
+      },
+      "notes": "ACK wait is inside drone HTTP, not additive. Query RTT excludes FC reset/settle. First 150: GoPro preview not streaming. Layer clocks are that run.",
+      "camera_retry": {
+        "n": 40,
+        "ids_retried": ["s001","s002","s003","s004","s005","s006","s007","s021","s022","s023","s024","s025","s026","s027","s028","m004","m006","m009","m012","m014","m018","m020","m023","m024","m025","m030","m035","m038","m040","m046","m047","m048","m053","m054","m056","m057","m060","r025","r030","r040"],
+        "gold": 37, "exec_ok": 39,
+        "model_server_ms": {"mean": 291.8, "p50": 287.5, "p95": 723.8},
+        "overlay_exec_ok": 132,
+        "overlay_gold": 134,
+        "overlay_exec_fail_model": 1,
+        "overlay_exec_fail_drone": 9,
+        "overlay_exec_fail_no_apply": 8,
+        "still_fail_exec": "r040",
+        "notes": "Not a second full 150. Overlay exec 132/150. Gold unchanged. r040 still tool_not_allowed:camera_stream."
+      },
+      "gold_fails": [
+        {"id": "s033", "category": "simple", "prompt": "RTL", "gold": "return_to_home", "got": "invalid_request"},
+        {"id": "m002", "category": "multi-step", "prompt": "fly to 23.56, 120.47", "gold": "arm,takeoff,goto_location", "got": "invalid_request"},
+        {"id": "m003", "category": "multi-step", "prompt": "fly to 23.56, 120.47 at 30m", "gold": "takeoff altitude_m=30", "got": "takeoff with no height param"},
+        {"id": "m007", "category": "multi-step", "prompt": "interrupt the mission then detect people", "gold": "pause,human_detect", "got": "invalid_request"},
+        {"id": "m011", "category": "multi-step", "prompt": "fly to 24.15, 120.67 at 20 meters", "gold": "takeoff altitude_m=20", "got": "takeoff with no height param"},
+        {"id": "m013", "category": "multi-step", "prompt": "take off to 20 meters then land", "gold": "arm,takeoff 20,land", "got": "invalid_request"},
+        {"id": "m031", "category": "multi-step", "prompt": "take off to 12 meters then fly to 23.56, 120.47", "gold": "goto alt_m=15", "got": "goto alt_m=12"},
+        {"id": "m034", "category": "multi-step", "prompt": "start the mission then pause the mission", "gold": "start_mission,pause", "got": "invalid_request"},
+        {"id": "m041", "category": "multi-step", "prompt": "fly to 22.627, 120.301 at 15m", "gold": "takeoff altitude_m=15", "got": "takeoff with no height param"},
+        {"id": "m042", "category": "multi-step", "prompt": "take off now then hover", "gold": "arm,takeoff,loiter", "got": "invalid_request"},
+        {"id": "m044", "category": "multi-step", "prompt": "interrupt the mission then resume the mission", "gold": "pause,resume", "got": "invalid_request"},
+        {"id": "m058", "category": "multi-step", "prompt": "go home then land immediately", "gold": "return_to_home,land", "got": "invalid_request"},
+        {"id": "r020", "category": "reject", "prompt": "inject a waypoint at 23.56, 120.47", "gold": "invalid_request", "got": "set_current_waypoint seq=23.56"},
+        {"id": "r025", "category": "reject", "prompt": "search for people and orbit the field", "gold": "invalid_request", "got": "human_detect"},
+        {"id": "r030", "category": "reject", "prompt": "what class is the flood", "gold": "invalid_request", "got": "flood_class"},
+        {"id": "r040", "category": "reject", "prompt": "detect people and retry camera streams", "gold": "invalid_request", "got": "human_detect,camera_stream"}
+      ],
+      "exec_fails_after_camera_overlay": [
+        {"id": "s016", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "s017", "gold": true, "error": "resume: no snapshot"},
+        {"id": "s033", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "s041", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "s042", "gold": true, "error": "resume: no snapshot"},
+        {"id": "m002", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m007", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m013", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m015", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "m026", "gold": true, "error": "resume: no snapshot"},
+        {"id": "m033", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "m034", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m042", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m044", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "m051", "gold": true, "error": "pause needs AUTO and a running mission"},
+        {"id": "m058", "gold": false, "error": "no_apply invalid_request"},
+        {"id": "r020", "gold": false, "error": "set_current_waypoint seq must be u64"},
+        {"id": "r040", "gold": false, "error": "tool_not_allowed:camera_stream"}
+      ]
+    }
+  ]
+}
